@@ -17,6 +17,78 @@
 
 ---
 
+## 🛠️ 2026-11-02 · 打包：应用清单 + 版本资源进 exe，单文件 7.4MB
+
+**🎯 做了什么**：
+
+1. `scripts/build.ps1`：`-Version <ver>`（默认 `0.1.0-dev`），产出 `dist/keyboard-statistics-v<ver>.exe`；
+   构建前先删同名旧产物，可重复执行。核心命令保持一条：
+   `go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=<ver>" -o <产物> ./cmd/app`。
+2. `assets/app.manifest`：`asInvoker`（不请求管理员）、DPI `PerMonitorV2` + `true/pm` 兼容写法、
+   声明 Win10/11 兼容（`supportedOS` GUID）、Common-Controls v6。
+3. `assets/winres.json`：把上面这份 manifest 和版本信息（FileVersion / ProductName / FileDescription，
+   CompanyName 与 LegalCopyright 留空）编成 `cmd/app/rsrc_windows_amd64.syso`，由 `go build` 自动链进 exe；
+   syso 是构建输入，脚本在 `finally` 里删掉，`.gitignore` 再补 `*.syso` 兜底。
+4. 实测产物 `keyboard-statistics-v0.1.0-test.exe`：**7,759,872 字节（7.40 MB）**，
+   PE 头 `Subsystem = 2 (WINDOWS_GUI)`，双击不弹黑框控制台。
+5. 版本号与 manifest 做了**三重验证**（详见「测试状态」），其中前两重脚本每次构建都会自己跑。
+
+**💡 为什么**：
+
+- 「单文件 exe、免安装、双击即用」是第一分发约束：manifest 和版本资源必须**编进 exe**，
+  不能靠外置 `.manifest` 文件，也不该依赖安装包去写注册表。
+- **CGO_ENABLED=0 探测**：脚本先试纯 Go 构建，失败才退回默认 cgo。界面换原生 Win32 后这条路已经通了：
+  产物 7.4MB，依赖只剩 `modernc.org/sqlite` / `golang.org/x/sys` 一系，连 MSYS2 的 gcc 都不用装。
+  但脚本**不写死**这个结论——每次运行实时探测，将来依赖变了也能自动判断。
+- go-winres 用 **`make` 而不是 `simply`**：`simply` 只能选它内置的 `cli`/`gui`/`none` 清单，塞不了自定义
+  `app.manifest`；只有 `make` + `winres.json` 能把外置 manifest 编进去
+  （`winres.json` 里的资源路径相对于该 json 所在目录，所以写 `app.manifest` 就够了）。
+- 不往 `go.mod` / `go.sum` 加依赖：go-winres 用 `go run github.com/tc-hib/go-winres@v0.3.3` 跑，用完即走，
+  构建工具不该变成项目依赖。
+
+**🕳️ 踩的坑**（后来人直接抄结论）：
+
+1. **本机只有 Windows PowerShell 5.1，没有 `pwsh`**（`where pwsh` 找不到）。
+   PS 5.1 对**无 BOM** 的 `.ps1` 按 ANSI/GBK 解码，第一版带中文注释的脚本直接被解出 **15 个语法报错**
+   —— UTF-8 中文的尾字节会让解码错位，把后面的 ASCII 字符（如 `}`）一起吞掉。
+   项目规定 `.ps1` 必须 UTF-8 无 BOM，唯一安全交集就是**纯 ASCII**：脚本注释与输出全用英文，
+   保持 0 个非 ASCII 字节（PS 5.1 与 PS 7 都能跑）。**想放中文注释就必须加 BOM，那会违反
+   `.editorconfig`，别开这个口子。**
+2. **在本仓库路径下直接跑 `.ps1` 会被执行策略拦住**：报 "is not digitally signed"，
+   但同样内容拷到 `%TEMP%` 却能跑，且 `Get-ExecutionPolicy` 显示 RemoteSigned、文件也没有 Zone.Identifier 流。
+   本机统一用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1 -Version x.y.z`；
+   用户机器上正常的 RemoteSigned 不受影响，README 里写 `pwsh -File ...` 即可。
+3. **Fyne 时期 `CGO_ENABLED=0` 必然失败**，真实报错：
+   `imports github.com/go-gl/gl/v2.1/gl: build constraints exclude all Go files in …/go-gl/gl@…/v2.1/gl`
+   —— OpenGL 驱动是 cgo-only，跟「sqlite 是纯 Go」无关。换成原生 Win32 后这条约束才消失。
+4. **`go-winres --file-version` 只吃纯数字**（`1.2.3` / `1.2.3.4`），`0.1.0-test` 直接传会失败；
+   脚本先把 `0.1.0-test` 规整成 `0.1.0.0`（截掉 prerelease、补齐四段）再传。
+5. GitHub 直连不通不影响：`go run 模块@版本` 走 `GOPROXY`，`goproxy.cn` 实测可用，版本钉在 v0.3.3。
+
+**✅ 测试状态**：
+
+- 脚本实跑三次（`-Version 0.1.0-test` 连跑两遍 + 一次不带参数走默认 `0.1.0-dev`），每次 exit 0；
+  两次同版本构建的产物字节数完全一致（7,759,872），`cmd/app/*.syso` 无残留，可重复执行成立。
+- ① **产物字节搜**：GUI 版没有控制台，`--version` 看不到输出，改为在 exe 字节里搜 `0.1.0-test`
+  （`-s -w` 不会删数据段里的字符串字面量），同时搜 `level="asInvoker"` / `PerMonitorV2` / `true/pm` /
+  Win10-11 的 `supportedOS` GUID，全部命中，说明 manifest 真的嵌进去了而不只是文件存在。
+- ② **控制台变体实跑**：脚本第 4 步用同样的 ldflags 去掉 `-H windowsgui` 另编一个临时 exe，
+  实跑 `--version` 得到 `keyboard-statistics 0.1.0-test`，退出码 0，带 10s 超时保护
+  （防止将来 `--version` 被改坏把 GUI 拉起来卡住构建）。
+- ③ **脚本外复核**：`go version -m` 显示 `CGO_ENABLED=0` + `-trimpath=true`；PE 头 `Subsystem=2`；
+  `(Get-Item exe).VersionInfo` 读到 FileVersion `0.1.0.0`；`go-winres extract` 抽出的资源里
+  `dpi-awareness = per monitor v2`、`use-common-controls-v6 = true`。
+- 本次未改任何 Go 代码，未动 `go.mod` / `go.sum`（`go run 模块@版本` 不会写 go.mod）。
+
+**➡️ 下一步**：
+
+1. 等 `internal/ui` 的 Win32 界面写完、`fyne` 从 `go.mod` 摘干净后，重新出一版包。
+2. 按 AGENTS 的发布要求，在**云桌面 / 远程桌面**（无 GPU 加速）双击实跑，确认能出窗口、无黑框、DPI 不糊，
+   验证步骤补进 `docs/manual-test.md`。
+3. 首次发版前同步 `CHANGELOG.md` 与 `README.md` 的版本号。
+
+---
+
 ## 🛠️ 2026-11-02 · 界面选型改道：Fyne 撞上 OpenGL 死路，改原生 Win32（GDI）
 
 **🎯 做了什么**：
