@@ -23,15 +23,17 @@
 ## 技术栈
 
 - 语言：Go 1.22+（`go.mod` 里的版本就是最低支持版本，不要随意抬）
-- 界面：Fyne v2（`fyne.io/fyne/v2`），单窗口 + 设置页
+- 界面：原生 Win32（GDI 自绘，纯 Go 封装如 `github.com/lxn/walk`），**不依赖 OpenGL**。
+  云桌面 / 远程桌面没有可用 OpenGL，这条路已实测堵死（见 [docs/devlog.md](docs/devlog.md)，
+  落地方案见 [docs/ui-plan.md](docs/ui-plan.md)）
 - 键盘采集：`golang.org/x/sys/windows` 直接调 `SetWindowsHookExW`（WH_KEYBOARD_LL），
   **不用 cgo 的第三方钩子库**，也不引 gohook/mhook
 - 存储：`modernc.org/sqlite`（纯 Go，无 cgo）
 - 日志：`log/slog` 写文件，按大小轮转；不引 zap/logrus
 - 打包：`go build` 出单 exe；版本信息与图标用 `go-winres`
 
-> 界面与存储已定为 **Fyne + SQLite**。要换（例如换成 `lxn/walk` 以摆脱 cgo，或换成 bbolt/JSON
-> 以降低依赖）**必须先问**，不要自己改。
+> 界面已定为**原生 Win32（GDI）**，存储仍是 **SQLite**（`modernc.org/sqlite`）。
+> 要换界面栈（别的 GUI 框架）或换存储（如 bbolt/JSON）**必须先问**，不要自己改。
 
 ## 开发方式：TDD 驱动
 
@@ -86,7 +88,7 @@ internal/hook/           # Windows 键盘钩子，带 //go:build windows
   hook_stub.go           # 非 Windows 平台的空实现，保证 go test 能跑
 internal/store/          # sqlite 打开、建表、批量 upsert
 internal/stats/          # 纯函数：聚合、时间分桶、导出
-internal/ui/             # Fyne 页面与组件
+internal/ui/             # Win32 页面与组件（GDI 自绘）
 internal/config/         # 配置读写、路径解析
 assets/                  # 图标、manifest、winres 配置
 scripts/                 # build.ps1 等
@@ -108,7 +110,8 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   时间边界（午夜/周一零点）、超大计数。
 - `internal/store`：用 `t.TempDir()` 建真实 sqlite 临时库，测建表、批量 upsert 累加、按天查询；
   **不要 mock 数据库**。
-- `internal/hook` 与 Fyne UI 不做自动化测试，用接口隔离后测上层逻辑；钩子手动验证，
+- `internal/hook` 与 UI 不做自动化测试，用接口隔离后测上层逻辑；但 GDI 自绘里的**纯函数**
+  （布局计算、热力着色、命中测试等）**必须写表驱动测试**。钩子手动验证，
   验证步骤写进 `docs/manual-test.md`。
 - 测试不读真实数据库、不碰真实采集数据，用固定 fixture。
 - 测试不依赖执行顺序、不用 `time.Sleep` 等时序、不访问网络；时间相关逻辑注入可控的 clock。
@@ -141,6 +144,8 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 ## 打包与发布
 
 - 产出只有一个 exe，用户双击即用，**不写注册表、不装服务**。
+- **产物不得依赖 OpenGL 或任何额外运行库**：单 exe 拷到别的机器就能跑；发布前必须在
+  **云桌面 / 远程桌面**（无 GPU 加速）实测能正常出窗口。
 - 需要安装包时再另加 Inno Setup / NSIS 脚本，脚本放 `scripts/`，不改变主程序行为。
 - 版本号注入 `main.version`，`--version` 能打印；发布产物命名 `keyboard-statistics-v1.2.0.exe`。
 - 每次发布更新 `CHANGELOG.md`，写清统计口径有没有变。

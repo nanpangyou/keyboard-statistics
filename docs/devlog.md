@@ -17,6 +17,76 @@
 
 ---
 
+## 🛠️ 2026-11-02 · 界面选型改道：Fyne 撞上 OpenGL 死路，改原生 Win32（GDI）
+
+**🎯 做了什么**：
+
+1. **业务层收口完成**，全部有单元测试：Windows 键盘钩子（`WH_KEYBOARD_LL` + `runtime.LockOSThread`
+   + 消息循环）、采集状态机（长按去重 / 组合键判定 / 活跃时长）、SQLite 存储（WAL + 累加 upsert）、
+   统计聚合（TOP10 / 24 小时时段分布 / 日均 / 峰值）、CSV 导出（UTF-8 BOM）、
+   开机自启（`HKCU\...\Run`）、服务层门面 `internal/service`（UI 只依赖它）。
+2. **界面层撞墙**：Fyne v2 在本机（云桌面，无 GPU 加速）创建窗口直接失败，报错原文见下方「踩的坑」。
+3. 试过用 MSYS2 的 Mesa 软渲染替换 `opengl32.dll`，能起窗口但依赖链要带 `libLLVM-23.dll`（约 170MB），
+   放弃——那会把「单文件 exe」变成「exe + 一堆 DLL」。
+4. 用户拍板：**界面改用原生 Win32（GDI）**，不碰 OpenGL。界面层开始重写，顺序是
+   骨架（窗口 + 消息循环 + 计时器刷新）→ 设置页 → 概览页 → 热力图页。
+5. 新增 `docs/ui-plan.md`：选型理由、三页结构、GDI 自绘思路、「新依赖准入检查」全部写进文档。
+
+**💡 为什么**：
+
+- 「单文件 exe、双击即用」是本项目的第一分发约束。任何要求用户额外装运行库、驱动、
+  甚至只是多带几个 DLL 的方案都不合格——Mesa 能跑，但 170MB 的 LLVM 依赖直接违背这条约束。
+- Fyne 的渲染后端是 **OpenGL 2.1+**。云桌面 / 远程桌面 / 部分虚拟机与服务器核显环境经常没有可用的
+  WGL 实现。这不是「换个版本就好」的问题，而是架构性依赖；目标用户里这类环境并不罕见。
+- 原生 Win32 + GDI 只依赖 `user32.dll` / `gdi32.dll` 这些**系统自带** DLL，用
+  `golang.org/x/sys/windows` 纯 syscall 调用，**不需要 cgo**、不要求任何图形加速、体积增量几乎为零，
+  RDP 下走 GDI 重定向天然可用（这是 RDP 的默认显示通道）。
+- 三页界面本身不复杂，GDI 的「矩形 + 文字」足够画完热力图与柱状图，没必要为控件体系扛着一个重型 GUI 框架。
+
+**🕳️ 踩的坑**（后来人直接抄结论，别再重踩）：
+
+1. **Fyne 在无 GPU 环境起不来窗口**，实测报错原文：
+
+   ```
+   Fyne error: window creation error
+   Cause: APIUnavailable: WGL: The driver does not appear to support OpenGL
+   ```
+
+   注意它不是「渲染花屏」而是**窗口根本创建不出来**：GLFW 在 `wglCreateContext` 那一步就失败，
+   程序没有任何可用界面，等于完全不可用。
+2. **Mesa 软渲染这条路不值得，已放弃，不要再试**。把 MSYS2 的 Mesa `opengl32.dll`（llvmpipe）
+   拷到 exe 旁边确实能起窗口，但完整依赖链还要 `libLLVM-23.dll`（约 170MB）以及若干 mingw 运行时 DLL；
+   打包出来不再是单文件，用户只拷走 exe 就会报「找不到 DLL」。
+3. **Fyne 窗口创建失败后进程不退出，变成没有窗口的僵尸进程，并且占住调用方的 stdout 管道**。
+   `ShowAndRun()` 失败后进程还活着：没有窗口、也没有退出，而且它继承了调用方（终端 / 脚本 / agent）
+   的 stdout 句柄，调用方一直等管道 EOF，命令就永远不返回——表象是「编译或运行卡死」，
+   实际是进程还在跑。
+   **排查顺序**：先 `Get-Process` 看有没有残留的 `keyboard-statistics` / `go` 进程和它占的句柄，
+   该杀就 `Stop-Process -Force`，再去看真实报错；不要直接反复重跑同一条命令，残留进程只会越堆越多。
+4. Fyne v2 没有暴露「最小化窗口」的 API，之前自启最小化是靠 `FindWindowW` + `ShowWindow` 打的补丁
+   （见 `internal/ui/window_windows.go`）。换成原生 Win32 后这段补丁可以整体删掉，
+   `CreateWindowExW` 的 `STARTUPINFO.wShowWindow` 直接给 `SW_SHOWMINNOACTIVE` 即可。
+
+**✅ 测试状态**：`go test ./...` 全绿 —— 实测 50 个 `Test` 函数、含子测试共 **115 个用例**通过
+（`internal/stats` / `internal/store` / `internal/collect` / `internal/config` / `internal/service`；
+`hook` 与 `ui` 无测试文件）。按 AGENTS.md 的约定，**钩子与 UI 不做自动化测试**，界面靠手动验证，
+验证步骤待补进 `docs/manual-test.md`。
+注意：`internal/ui` 当前仍是**旧的 Fyne 实现**，重写期间它会短暂处于「能编译但方向已废弃」的状态，
+新代码按 `docs/ui-plan.md` 落地；也正因为 Fyne 走 cgo，跑 `go test ./...` 时 PATH 里必须有
+`C:\msys64\mingw64\bin`（否则 `cmd/app` 与 `internal/ui` 报 `cgo: C compiler "gcc" not found`
+而 `[build failed]`，这不是代码坏了）。Fyne 摘掉后这条 PATH 依赖会一起消失。
+
+**➡️ 下一步**：
+
+1. 按 `docs/ui-plan.md` 写 Win32 骨架：`CreateWindowExW` + `WndProc` + `SetTimer(2000ms)` 驱动刷新。
+2. 设置页（采集开关 / 清空 / 导出 / 自启 / 关于）→ 概览页（指标 + 24 小时柱状图）→ 热力图页（键位图）。
+3. 界面全部迁完后**单独一次 `🔧 chore` 提交**摘掉 `fyne.io/fyne/v2` 与 `go-gl/glfw`，并复跑
+   `CGO_ENABLED=0 go build` 确认单文件 exe 仍能构建、体积没膨胀。
+4. 把「云桌面 / RDP 下能起窗口」写进 `docs/manual-test.md`，列为发布前必测项。
+5. `AGENTS.md` 的「技术栈」一节仍写 Fyne，与本次决策冲突，需确认后再改；本次不擅自改工程说明书。
+
+---
+
 ## 🛠️ 2026-11-02 · 工程规范：UTF-8、提交身份、日志体系
 
 **🎯 做了什么**：
