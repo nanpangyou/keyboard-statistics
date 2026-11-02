@@ -17,6 +17,152 @@
 
 ---
 
+## ✨ 2026-11-02 · 概览页 / 热力图页落地 + 首次启动说明 + 端到端验证
+
+**🎯 做了什么**：
+
+1. **概览页**：四张指标卡（总按键 / 活跃时长 / 日均 / 峰值）、按键与快捷键 TOP 10（两套占比分母独立）、
+   24 小时时段柱状图、空状态与「有按键无组合」的差异化提示。布局全部走纯函数，22 个表驱动测试。
+2. **热力图页**：5 行 QWERTY 键位（`unit = min(宽/15, 高/5)` 等比缩放居中）、
+   `t = sqrt(count/max)` 着色、悬停 2px 描边 + 图下行「键名 · 次数 · 占比」、空状态全灰。13 个纯函数测试。
+3. **采集入口归一化左右修饰键**：`collect.KeyDown/KeyUp` 一进来就 `stats.NormalizeVK`，4 个新用例。
+4. **首次启动说明框**：`MessageBoxW` 弹一次，含「已经在采、采什么、怎么停」三句，确认后写 `meta.onboarded`；
+   文案本身有测试盯着（少一句就红）。
+5. **端到端验证**：真实钩子注入 `A` / `Ctrl+C` / `←`，库里落成 `A=1 C=1 Ctrl=1 ←=1`、`Ctrl+C=1`、
+   `day_activity` 记到首末按键时间；关窗后进程归零。
+
+**💡 为什么**：
+
+- 界面用「页面 = 纯绘制函数 `paintXxx(cv canvas, content Rect)`」，把布局/着色/命中抽成无 build tag 的纯函数，
+  才能在无 GUI 环境下跑单元测试——AGENTS.md 要求「UI 不做自动化测试，但 GDI 纯函数必须表驱动」。
+- 归一化放在**采集入口**而不是展示层：否则按键计数、TOP 榜、热力图、组合判定会各算一套，
+  出现「榜单两行 Shift、热力图 Shift 恒为 0」这种自相矛盾（这次真的踩到了）。
+- 说明框用 `MessageBoxW` 而不是托盘气泡：不为一次性提示引入托盘依赖。
+
+**🕳️ 踩的坑**：
+
+1. **归一化写了但没接线**：`NormalizeVK` 有实现有测试，却没人调用。症状是热力图 Shift 永远是 0、
+   TOP 榜出现两行 Shift。教训：新增的纯函数一定要在实现里搜一遍调用点，测试全绿不代表它被用上了。
+2. **我的测试把口径写反了**：断言「Shift+A 是组合键」，但 `docs/metrics.md` 明确 Shift + 字符键不算组合
+   （那是打大写字母）。错的是测试不是实现——先改测试再说，**规格文档是唯一标准**。
+3. **`MessageBoxW` 是模态的**：说明框弹着时主窗口收不到 `WM_CLOSE`，自动化脚本里会看到「进程残留」。
+   必须先 `WM_CLOSE` 关掉说明框，再关主窗口；`WM_COMMAND(IDOK)` 在这个场景下不生效。
+4. **`FindWindowW` 找不到窗口不说明没窗口**：用 `EnumWindows` 按 PID 枚举才发现说明框 0.9 秒就在了。
+   排查窗口问题一律先枚举该进程的所有顶层窗口，别只信一次 `FindWindow`。
+5. **PS 5.1 的 `Get-Content` 会把 UTF-8 显示成乱码**：看着像文件被写坏，实际用 UTF-8 校验器一过是 0 个坏文件。
+   判断编码只能靠校验器，不能靠控制台输出。
+
+**✅ 测试状态**：
+
+- `go test ./... -count=1` 全绿（collect / config / service / stats / store / ui）
+- `go vet ./...` 干净，`gofmt -l .` 无输出
+- 全仓库 61 个文件 UTF-8 校验通过（0 个坏文件）
+- 真机像素采样：卡片白底、选中态 `#2F6FEB`、热力图渐变 `A→S→D→Q` 逐级变浅、悬停白边→移出复原
+- 端到端：`Ctrl+C=1` 组合键落库成功，说明框确认后 `meta.onboarded=1`
+
+**➡️ 下一步**：出 v0.1.0 正式包并在云桌面/远程桌面复跑一遍；托盘常驻（v0.2）、
+链式快捷键与按应用统计暂不做；键盘可达性（Tab 聚焦）需要先定自绘状态机。
+
+---
+
+## ✨ 2026-11-02 · 原生 Win32 界面落地：裸 syscall + GDI 自绘，Fyne 彻底移除
+
+**🎯 做了什么**：
+
+1. **先证明窗口能出来，再动界面代码**。`github.com/lxn/walk` 实测**建不出任何窗口**：
+   `walk.NewMainWindow()` 在 `ToolTip.addTool` → `TTM_ADDTOOL` 处失败，空窗口、只有一个 Label、
+   只有一个 PushButton 三种最小 demo 全部同样报错——每个 walk 控件在 init 时都会注册 tooltip，
+   所以这不是用法问题，是这条路走不通。`Get-Process | Select-Object MainWindowTitle` 对
+   notepad 能读出「无标题 - 记事本」，证明测量方法本身没问题，失败是 walk 特有的。
+   结论：**不引任何 GUI 框架**，`syscall` 直接调 `user32` / `gdi32`，GDI 自绘。
+   （原任务书里「walk 首选、windigo 兜底」两句随之作废，见 `docs/ui-plan.md` §1。）
+2. `internal/ui` 整层重写，旧 Fyne 文件全删；`go.mod` 里 `fyne.io/fyne/v2` 及约 40 个间接依赖
+   被 `go mod tidy` 清干净，现在只剩 `modernc.org/sqlite` + `golang.org/x/sys` 两系，
+   `CGO_ENABLED=0` 直接构建通过。
+3. 分层：**能脱离 Win32 的逻辑全部拆成纯函数**，独占单测。
+   - `layout.go`：`Rect`（字段顺序与 Win32 `RECT` 一致）、`ComputeLayout`（工具栏/标签栏/状态栏/
+     时间范围按钮）、`ComputeSettingsLayout`（设置页每个可点矩形）、`HitScope`/`HitTab`/`Hit` 命中测试、
+     `px()` 按 DPI 缩放。绘制和点击**共用同一份布局**，不会出现「看着在这、点了没反应」。
+   - `state.go`：`autostartAction`（`updating` 标志 + 勾选态 → 启用/停用/不动）、`collectButtonText`、
+     `statusText`、`staleWarningText`、`rangeSummary`、`aboutLines`。
+   - `win32.go`：约 50 个 `NewLazyDLL` + `NewProc`，结构体 `wndClassEx`/`msg`/`paintStruct`/
+     `minMaxInfo`/`browseInfoW` 等，以及双缓冲绘制、DPI 查询、选目录框、`ShellExecuteW`。
+   - `app_windows.go`：窗口生命周期 + 消息循环 + 状态机；`paint.go` + `page_*.go`：自绘。
+   - `app_stub.go`（`!windows`）：保留同样的 `Options` / `App` / `New` / `Run`，让 `go test ./...` 在任何平台都能过。
+4. 对外 API 没变：`ui.New(ui.Options{Version, ExePath, Autostart, StartMinimized}, svc)` + `app.Run()`，
+   `cmd/app/main.go` 一行没改，`Run()` 关窗返回后 main 自己 `svc.Close()`。
+5. 窗口：标题「键盘使用统计」，客户区 900×680、最小 800×600（`WM_GETMINMAXINFO`），启动居中，
+   2 秒定时器（`WM_TIMER`）触发刷新；取数在后台 goroutine 里跑 `svc.Snapshot(scope)`，
+   完成后 `PostMessage(msgSnapshotReady)` 回窗口线程——**UI 线程绝不等 SQLite**。
+   切换时间范围时，回来的旧数据按 `scope` 比对后丢弃重取，不会画错。
+6. 设置页本轮做完整（四个动作 + 关于）：
+   采集开关（`svc.Collecting/SetCollecting`）、开机自启（`config.NewAutostart`，nil 时复选框禁用；
+   `Stale()` 时显示「⚠ 自启路径已失效，请取消后重新勾选」）、导出 CSV（选目录 → `svc.ExportCSV(dir)` →
+   弹窗列出两个文件全路径）、清空全部数据（二次确认，默认按钮在「否」）、打开数据目录、
+   关于区（版本 / 数据目录 / 隐私声明 + 设置页写明 UAC 提权窗口收不到按键）。
+   概览页与热力图页仍是占位文案，留给下一轮。
+
+**💡 为什么**：
+
+- 云桌面 / 远程桌面没有可用 OpenGL，Fyne 的老路已堵死（见下一条日志）；GDI 只依赖 `gdi32.dll`，
+  单 exe、无运行库、无 GPU 加速也能画，是唯一能保证「拷到别的机器双击就出窗口」的路子。
+- 布局做成纯函数不只是为了测试：GDI 自绘**没有控件帮忙记热点区域**，「画在哪」和「点到哪」
+  必须算自洽，抽出来之后两边共用一份结果，改一处不会漏另一处。
+- 自绘按钮/复选框就没有「程序化勾选会触发回调」的问题，但 `updating` 标志仍然保留：
+  将来若换真控件，`syncSettingsState` 期间不会反过来写注册表。
+- 2 秒刷新 + 后台取数：`WM_TIMER` 里直接查库会让窗口在大范围聚合时卡住；
+  再加一个 `fetching` 闩，上一次没回来就跳过本次 tick，慢查询不会堆积。
+
+**🕳️ 踩的坑**（后来人直接抄结论）：
+
+1. **双缓冲顺序坑（这次真踩了，整窗空白）**：`BitBlt` 必须在**位图仍被 `SelectObject` 选中**时做。
+   先 `SelectObject(memDC, old)` 还原旧位图、再 `BitBlt`，拷到的就是那块 1×1 占位位图，
+   窗口整片纯白，但 `WM_PAINT` 明明在跑、客户区尺寸也对，非常像「根本没重绘」。
+   正确顺序：画 → `BitBlt` → `SelectObject(old)` → `DeleteObject(bmp)` → `DeleteDC`。
+2. **断言「界面画出来了」不能只看截图**：本机 `CopyFromScreen` 与 `PrintWindow(PW_RENDERFULLCONTENT)`
+   对未实现 `WM_PRINTCLIENT` 的自绘窗口都返回整片纯白，看起来像「什么都没画」。
+   可靠办法是 `GetDC(hwnd)` + `GetPixel` 直接读窗口 DC：能读到 `0x00F5F5F5` 内容区、
+   `0x00EEEEEE` 状态栏、选中项 `0x002F6FEB` 才算真的画上了。另外注意 ClearType 会让文字边缘
+   出现彩色（采样时避开文字，取按钮离字 20px 以上的位置）。
+3. **`go vet` 会拦 `uintptr → unsafe.Pointer`**（`possible misuse of unsafe.Pointer`）：
+   - `WM_GETMINMAXINFO` 的 `lParam` 直接声明成 `unsafe.Pointer`（`syscall.NewCallback` 接受
+     `unsafe.Pointer` 参数，尺寸等于指针即可），再 `(*minMaxInfo)(lParam)`，连转换都不用写。
+   - 结构体字段里的字符串指针用 `utf16Str(s) *uint16`，不要 `(*uint16)(unsafe.Pointer(utf16Ptr(s)))`。
+4. **测试环境里 `%TEMP%` 下建目录会被拒**：沙箱化启动的子进程 `MkdirAll(%TEMP%\xxx\keyboard-statistics)`
+   报 `Access is denied`，程序在 `config.EnsureDir` 就 `fatal` 退出，且因为 `logger == nil` **一声不响**
+   （exit code 1、无输出、无日志），很容易误判成「窗口没建出来」。本地验证时把 `LOCALAPPDATA`
+   指到仓库内的 `bin\_testdata` 这类可写目录即可（`bin/` 已在 `.gitignore`）。
+5. `CreateFontW` 的 `lfHeight` 要取负数，且 `-20` 这种常量直接传 `uintptr` 会报
+   `constant -20 overflows uintptr`：先赋给 `int32` 变量再转。
+6. 取 `GOPATH` 别用 `$env:GOPATH`（本机是空的、被 `D:\` 顶掉），用 `go env GOMODCACHE`。
+
+**✅ 测试状态**：
+
+- 纯函数层**先写测试后写实现**：`layout_test.go`（`Rect` 语义、五种尺寸下的布局关系、命中测试、
+  设置页矩形不重叠且自上而下有序、2× 缩放正好翻倍）、`state_test.go`（按钮文案/状态文案/
+  自启动作三态/失效提示/时间范围摘要/关于四行）。
+  `go test ./internal/ui` 全绿。
+- `gofmt -l .` 无输出；`go vet ./...`、`go test ./...` 全绿；`CGO_ENABLED=0 go build ./cmd/app` 通过，
+  产物 7.4MB 单 exe。
+- 手工实测（release 构建，`LOCALAPPDATA` 指到可写目录）：
+  `Get-Process | Select-Object MainWindowTitle` → **`键盘使用统计`**，窗口 916×719（客户区 900×680）；
+  `GetDC`+`GetPixel` 抽查工具栏白、选中时间范围 `#2F6FEB`、内容区 `#F5F5F5`、状态栏 `#EEEEEE`；
+  点击「近 7 天」选中态跟着走，点「设置」标签下划线跟着走；点「暂停采集」按钮由白变主色，
+  再用 `service.New` 读同一个库确认 `Collecting() = false`（界面 → 服务 → 落库整条链路通）；
+  `WM_CLOSE` 后进程 5 秒内退出、`Get-Process` 无残留；`--autostart` 启动 `IsIconic = true`（最小化）。
+- 本机沙箱拿不到注册表（`Access is denied`），正好走了「自启不可用 → 复选框禁用」的兜底分支，
+  日志里是一条 WARN，不崩。
+
+**➡️ 下一步**：
+
+- 概览页（总按键数/活跃时长/日均/峰值/TOP 10/24 小时柱状图）与热力图页（QWERTY 键位 + 着色 + 悬停）实现。
+- `docs/ui-plan.md` §10 里还欠的：首次启动引导对话框 + 系统通知气泡（§10.1，需产品确认）、
+  文件对话框语义（§10.2）、应用清单的 per-monitor DPI（§10.3，`assets/app.manifest` 已声明，
+  但运行时跨显示器迁移不重排）、字体回退链（§10.4）。
+- 键盘可达性（Tab 聚焦、空格/回车触发）目前没做：自绘界面没有焦点概念，接入前先想清楚状态机。
+
+---
+
 ## 🛠️ 2026-11-02 · 打包：应用清单 + 版本资源进 exe，单文件 7.4MB
 
 **🎯 做了什么**：
