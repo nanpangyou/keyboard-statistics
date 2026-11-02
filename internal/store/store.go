@@ -365,3 +365,53 @@ func (s *Store) SetMeta(key, value string) error {
 	}
 	return nil
 }
+
+// KeyRows 返回闭区间内的明细行，按 日期→小时→键码 排序，供 CSV 导出。
+func (s *Store) KeyRows(from, to string) ([]KeyDelta, error) {
+	rows, err := s.db.Query(
+		`SELECT day, hour, vk, count FROM key_count WHERE day BETWEEN ? AND ? ORDER BY day, hour, vk`,
+		from, to)
+	if err != nil {
+		return nil, fmt.Errorf("查询按键明细: %w", err)
+	}
+	defer rows.Close()
+
+	var out []KeyDelta
+	for rows.Next() {
+		var d KeyDelta
+		var vk int64
+		if err := rows.Scan(&d.Day, &d.Hour, &vk, &d.Count); err != nil {
+			return nil, fmt.Errorf("扫描按键明细: %w", err)
+		}
+		d.VK = uint16(vk)
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历按键明细: %w", err)
+	}
+	return out, nil
+}
+
+// ComboRows 返回闭区间内的组合键明细，按 日期→小时→组合名 排序。
+func (s *Store) ComboRows(from, to string) ([]ComboDelta, error) {
+	rows, err := s.db.Query(
+		`SELECT day, hour, combo, count FROM combo_count WHERE day BETWEEN ? AND ? ORDER BY day, hour, combo`,
+		from, to)
+	if err != nil {
+		return nil, fmt.Errorf("查询组合键明细: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ComboDelta
+	for rows.Next() {
+		var d ComboDelta
+		if err := rows.Scan(&d.Day, &d.Hour, &d.Combo, &d.Count); err != nil {
+			return nil, fmt.Errorf("扫描组合键明细: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历组合键明细: %w", err)
+	}
+	return out, nil
+}
