@@ -90,7 +90,11 @@ internal/ui/             # Fyne 页面与组件
 internal/config/         # 配置读写、路径解析
 assets/                  # 图标、manifest、winres 配置
 scripts/                 # build.ps1 等
-docs/metrics.md          # 统计口径说明
+README.md                # 使用手册（每个发布版本都必须重写）
+CHANGELOG.md             # 版本变更（用户可见）
+docs/requirements.md     # 需求说明
+docs/metrics.md          # 统计口径（唯一标准）
+docs/devlog.md           # 开发日志（面向后续 agent 的流水账）
 docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 ```
 
@@ -111,6 +115,9 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 
 ## 编码规范
 
+- **一律 UTF-8（无 BOM）**：源码、文档、配置全部 UTF-8，换行 LF（`*.ps1/*.bat/*.cmd` 用 CRLF），
+  由 `.editorconfig` 约束。禁止 ANSI / GBK / 带 BOM 的文件，也禁止用 shell 重定向写源码
+  （见工作守则第 9 条），否则中文注释会变成非法 UTF-8 把文件毁掉。
 - 错误必须 wrap：`fmt.Errorf("flush stats: %w", err)`，不要吞错、不要 `panic`。
 - 导出的函数要有 godoc 首行注释；注释写"为什么"，不写"做了什么"。
 - 并发用 `context.Context` 传取消；后台 goroutine 必须能被关闭，程序退出不残留。
@@ -145,6 +152,24 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 - 一次提交一件事；TDD 的一个红绿循环可以单独提交；重构与功能分开提交；
   构建产物（`bin/`、`dist/`）不进仓库。
 
+## 文档与日志
+
+**每次开发都要留下日志，否则视为未完成。** 三个文件分工不同，不要混：
+
+| 文件 | 读者 | 什么时候写 |
+|---|---|---|
+| `docs/devlog.md` | 后续的 AI 代理、新加入的人 | **每完成一个可提交的单元就在最上方追加一条** |
+| `CHANGELOG.md` | 用户 | 每个发布版本新增一节；有用户可见变化就记 |
+| `README.md` | 用户 | **每个发布版本按当时功能重写一遍**，开头标注手册版本号 |
+
+`docs/devlog.md` 每条要写清：**做了什么 / 为什么这么做 / 踩了什么坑 / 测试状态 / 下一步**。
+目的很直接——让下一个人不用翻 commit diff 就能接上活。
+
+`CHANGELOG.md` 分类固定用：新增 / 变更 / 修复 / 移除 / 安全。涉及统计口径变化时
+必须显式标注「口径变更」并说明对历史数据的影响。
+
+`README.md` 是使用手册，必须与 `CHANGELOG.md` 的版本号对应。**功能改了但手册没改，等于没做完。**
+
 ## 代理工作守则
 
 1. **测试先行**：先写失败的测试，再写实现；跳过 TDD 必须在回复里说明理由并等你确认。
@@ -164,6 +189,8 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 - [ ] 功能按描述可用，边界处理过（首次启动无数据、采集关闭、数据库损坏）
 - [ ] 新增/修改的逻辑都有对应测试，且是**先写测试后写实现**
 - [ ] `go vet ./... && go test ./...` 通过，`gofmt -l .` 无输出
-- [ ] 涉及统计口径变化时更新 `docs/metrics.md` 与 `CHANGELOG.md`
+- [ ] 涉及统计口径变化时更新了 `docs/metrics.md` 与 `CHANGELOG.md`
+- [ ] 在 `docs/devlog.md` 追加了本次开发记录（做了什么/为什么/坑/下一步）
+- [ ] 发布版本已重写 `README.md` 并标注手册版本号，与 `CHANGELOG.md` 对应
 - [ ] 新增/改动 Windows API 调用在 `docs/manual-test.md` 补了验证步骤
 - [ ] 没有新增未说明的依赖、没有提交密钥或构建产物
