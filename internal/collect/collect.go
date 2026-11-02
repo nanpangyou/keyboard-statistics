@@ -79,6 +79,10 @@ func (c *Collector) KeyDown(vk uint16) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// 钩子上报的是左右分开的键码（VK_LSHIFT / VK_RSHIFT），统计口径要求合并。
+	// 在入口统一归一化，后面的长按去重、组合判定、分桶才不会各自处理一套。
+	vk = stats.NormalizeVK(vk)
+
 	if _, held := c.pressed[vk]; held {
 		return // 系统长按会连发 KEYDOWN，这里必须吃掉
 	}
@@ -111,7 +115,9 @@ func (c *Collector) KeyDown(vk uint16) {
 func (c *Collector) KeyUp(vk uint16) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.pressed, vk)
+
+	// 必须和 KeyDown 用同一份归一化结果，否则左右键码会永远留在「按住」集合里
+	delete(c.pressed, stats.NormalizeVK(vk))
 }
 
 // Pending 返回当前待写入的桶数量，供后台判断是否需要提前 flush。
