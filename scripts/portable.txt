@@ -1,0 +1,13 @@
+Keyboard Statistics - portable mode marker (便携模式标记)
+=========================================================
+
+这个文件由安装程序在安装时勾选了「便携模式 / Portable mode」后放进 {app} 目录。
+只要它与 keyboard-statistics.exe 同目录存在,统计数据就写在同目录的 data\ 下,
+不写 %LOCALAPPDATA%\keyboard-statistics。
+
+This file is created by the installer when the "Portable mode" task is selected.
+While it sits next to keyboard-statistics.exe, the program stores its statistics
+in .\data next to the executable instead of %LOCALAPPDATA%\keyboard-statistics.
+
+想改回按用户存数据:删掉这个文件即可(已有的 data\ 目录不会自动搬走)。
+卸载时安装程序会问你要不要删掉 data\ 目录,默认不删。
