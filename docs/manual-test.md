@@ -118,7 +118,8 @@ Start-Process .\bin\app.exe -PassThru
 | 导出 CSV | 弹选目录框；确认后弹窗列出两个 csv 的完整路径，Excel 打开中文不乱码 |
 | 清空全部数据 | 弹二次确认，**默认按钮在「否」**；选否什么都不发生，选是之后概览归零 |
 
-「打开数据目录」应打开 `%LOCALAPPDATA%\keyboard-statistics`（不存在时先建出来）。
+「打开数据目录」应打开**真正的数据目录**（默认 `%LOCALAPPDATA%\keyboard-statistics`，
+便携模式下是 `<程序目录>\data`），不存在时先建出来。
 
 ### 8.3 自启最小化
 
@@ -135,4 +136,64 @@ Start-Process .\bin\app.exe -ArgumentList '--autostart'
 1. 文字不糊（已 `SetProcessDPIAware`），布局整体等比放大。
 2. 设置页「关于」里的四行说明**不能被裁掉**，按钮文字不出框。
 3. 若窗口跑到另一块不同 DPI 的显示器上，下次启动以该显示器为准（本轮未做运行时迁移重排）。
+
+## 9️⃣ 数据目录（便携模式 / 自定义位置）
+
+数据目录有三级来源：**用户指定 > 便携模式 > `%LOCALAPPDATA%`**，每一级都要单独验。
+
+### 9.1 便携模式生效
+
+```powershell
+$dir = "$env:TEMP\ks-portable"
+Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Copy-Item .\bin\app.exe "$dir\app.exe"
+Set-Content -Path "$dir\portable.txt" -Value 'portable' -Encoding ASCII
+Start-Process "$dir\app.exe"
+```
+
+1. 数据文件应出现在 `$dir\data\`（`stats.db`、`app.log`），**`%LOCALAPPDATA%\keyboard-statistics` 不新增文件**。
+2. 设置页「关于」里「数据目录」显示 `$dir\data`，「存放方式」显示「便携模式（程序目录）」。
+3. 「打开数据目录」打开的是 `$dir\data`。
+
+### 9.2 便携标记存在但目录不可写 → 回退
+
+把程序装到 `C:\Program Files\...`（或任何普通用户不可写的目录）并放上 `portable.txt`：
+
+1. 程序**必须能正常启动**，数据回退到 `%LOCALAPPDATA%\keyboard-statistics`。
+2. 设置页「存放方式」显示「用户数据目录」，不是「便携模式」。
+
+### 9.3 数据目录不可写 → 必须弹窗
+
+把 `LOCALAPPDATA` 指到一个非法路径再启动：
+
+```powershell
+$env:LOCALAPPDATA = 'C:\Windows\System32\config\sub'
+Start-Process .\bin\app.exe
+```
+
+必须弹出「数据目录无法写入」的错误框并说明路径；**不能是双击之后毫无反应**
+（`-H windowsgui` 没有控制台，静默 `os.Exit(1)` 等于没有任何反馈）。
+
+### 9.4 更改数据目录 + 自动迁移
+
+1. 设置页点「更改数据目录…」→ 选一个**空目录** → 确认。
+2. 程序应提示即将退出并真的退出。
+3. 重新打开后：新目录里出现 `stats.db`，旧目录里的 `stats.db` 已被搬走（不是复制）；
+   概览页数据与迁移前一致。
+4. 再点「更改数据目录…」并选中一个**已经存在 `stats.db`** 的目录：必须提示「已经有统计数据」
+   并拒绝，不能覆盖。
+
+### 9.5 安装包
+
+```powershell
+.\dist\keyboard-statistics-<版本>-setup.exe
+```
+
+1. 安装向导能自选安装目录（装到 `D:\...` 这种用户可写目录）。
+2. 勾选「便携模式」→ 装完 `{app}\portable.txt` 存在，首次启动数据落在 `{app}\data`。
+3. **不勾选**「便携模式」→ 没有 `portable.txt`，数据仍在 `%LOCALAPPDATA%`。
+4. 卸载：程序文件被删；若 `{app}\data` 里有统计数据，卸载器要**先问**再删，默认保留。
+5. 装到 `C:\Program Files\` 且**不勾选**便携模式：程序照常运行，数据在 `%LOCALAPPDATA%`
+   （这条验证「默认不写程序目录」的约定没被安装包破坏）。
 

@@ -6,7 +6,8 @@
 ## 项目定位
 
 `keyboard-statistics`：统计本机键盘使用情况的 Windows 桌面工具。按键频次、按键热力图、
-常用快捷键、按天/周趋势、导出。**单文件 exe 分发，免安装，双击即用。**
+常用快捷键、按天/周趋势、导出。**单文件 exe 分发，免安装，双击即用**；
+另提供可选安装包（自选安装目录，可勾选便携模式把数据放进程序目录）。
 
 这是本地工具，不是云服务。所有统计只留在本机。
 
@@ -139,14 +140,21 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   这是预期行为，必须在 README 和设置页说明，不要试图绕过。
 - 全局键盘钩子会被部分杀软误报。不要混淆、不要加壳；发布时尽量代码签名，README 里如实说明行为。
 - 加 `assets/app.manifest` 声明 DPI 感知，否则高分屏会糊。
-- 配置文件/数据库放 `%LOCALAPPDATA%\keyboard-statistics\`，不写程序目录（Program Files 无写权限）。
+- 数据目录解析顺序：**用户指定（HKCU）> 便携模式（exe 旁有 `portable.txt` 且实测可写）>
+  `%LOCALAPPDATA%\keyboard-statistics\`**。默认仍不写程序目录（Program Files 无写权限）；
+  便携模式是用户在安装时显式勾选的例外，必须实测可写，写不进去就回退并说明。
+- 数据目录不可写时必须**弹窗说明**（`ui.ShowFatal`），不能静默 `os.Exit(1)`——
+  `-H windowsgui` 下没有控制台，用户只会看到「双击没反应」。
+- 换数据目录时**搬文件只在启动早期做**（数据库尚未打开）：运行中 SQLite 持有文件句柄，
+  Windows 不允许移动；先关库再搬会让界面停在「服务已关闭」的半死状态。
 
 ## 打包与发布
 
 - 产出只有一个 exe，用户双击即用，**不写注册表、不装服务**。
 - **产物不得依赖 OpenGL 或任何额外运行库**：单 exe 拷到别的机器就能跑；发布前必须在
   **云桌面 / 远程桌面**（无 GPU 加速）实测能正常出窗口。
-- 需要安装包时再另加 Inno Setup / NSIS 脚本，脚本放 `scripts/`，不改变主程序行为。
+- 安装包用 Inno Setup，脚本 `scripts/installer.iss`：`PrivilegesRequired=lowest`（按用户安装，
+  允许自选目录），「便携模式」任务在 `{app}` 下创建 `portable.txt`。安装包不改变主程序行为。
 - 版本号注入 `main.version`，`--version` 能打印；发布产物命名 `keyboard-statistics-v1.2.0.exe`。
 - 每次发布更新 `CHANGELOG.md`，写清统计口径有没有变。
 
