@@ -16,6 +16,7 @@ import (
 	"keyboard-statistics/internal/config"
 	"keyboard-statistics/internal/service"
 	"keyboard-statistics/internal/stats"
+	"keyboard-statistics/internal/tray"
 )
 
 const (
@@ -127,6 +128,14 @@ type App struct {
 	mu       sync.Mutex
 	pending  *snapshotResult
 	fetching bool
+
+	// 托盘图标。trayAdded 为假说明没能放上托盘（或已经摘掉），
+	// 这时关窗必须真的退出，不能把程序藏起来又没有任何入口。
+	trayIcon      syscall.Handle
+	trayAdded     bool
+	trayHintShown bool
+	// onboardPending 为真表示「开机自启起就没露过面，欢迎说明还欠着」。
+	onboardPending bool
 }
 
 // New 记录参数并返回 App，此时还没有创建窗口。
@@ -170,9 +179,8 @@ func ActivateExisting() bool {
 	if h == 0 {
 		return false
 	}
-	// 窗口可能最小化了；SetForegroundWindow 对最小化窗口不生效，先还原。
-	showWindow(syscall.Handle(h), swRestore)
-	procSetForegroundWin.Call(h)
+	// 窗口可能收在托盘里（隐藏）或最小化了，两种情况都要能拉回来。
+	showExistingWindow(syscall.Handle(h))
 	return true
 }
 
@@ -189,8 +197,19 @@ func (a *App) Run() {
 
 	a.syncSettingsState()
 	a.requestRefresh()
-	a.show()
-	a.maybeOnboard()
+
+	// 开机自启拉起时直接待在托盘里：不弹窗口、也不在任务栏占位。
+	// 托盘图标没放上就退回原来的「最小化显示」——否则窗口和图标都没有，用户找不到它。
+	a.trayInit()
+	if a.opt.StartMinimized && a.trayAdded {
+		title, text := tray.AutostartHint()
+		a.trayBalloon(title, text)
+		// 开机时没人在电脑前，模态的欢迎框推迟到用户第一次打开窗口再弹。
+		a.onboardPending = true
+	} else {
+		a.show()
+		a.maybeOnboard()
+	}
 
 	var m msg
 	for {
@@ -253,6 +272,8 @@ func (a *App) createWindow() error {
 }
 
 func (a *App) cleanup() {
+	// 先摘托盘图标：进程结束后系统不会替我们清理，图标会一直残留到鼠标划过。
+	a.trayRemove()
 	killTimer(a.hwnd, refreshTimerID)
 	for _, f := range a.fonts {
 		if f != 0 {
@@ -315,8 +336,16 @@ func (a *App) wndProc(h syscall.Handle, message uint32, wParam uintptr, lParam u
 	case wmLButtonDown:
 		a.onClick(uintptr(lParam))
 		return 0
+	case msgTray:
+		a.onTrayMessage(uintptr(lParam))
+		return 0
 	case wmClose:
-		// 关窗即退出：v0.1 没有托盘常驻，不留下后台采集进程。
+		// 托盘常驻：关窗只是收进托盘，采集继续。
+		// 但托盘没放上（极端情况）时必须真退出，否则程序既没窗口也没图标，用户只能去任务管理器。
+		if a.trayAdded {
+			a.hideToTray()
+			return 0
+		}
 		destroyWindow(h)
 		return 0
 	case wmDestroy:
@@ -421,6 +450,8 @@ func (a *App) setPage(p pageID) {
 func (a *App) toggleCollecting() {
 	a.svc.SetCollecting(!a.svc.Collecting())
 	a.collecting = a.svc.Collecting()
+	// 托盘提示是窗口隐藏后唯一的状态出口，切完必须同步。
+	a.traySetTip(a.collecting)
 	a.requestRefresh()
 	invalidate(a.hwnd)
 }
@@ -635,7 +666,9 @@ func (a *App) changeDataDir() {
 
 	messageBox(a.hwnd, "数据目录已设为：\n\n"+dir+"\n\n程序即将退出，请重新打开以完成迁移。",
 		"更改数据目录", mbOK|mbIconInfo)
-	postMessage(a.hwnd, wmClose, 0, 0)
+	// 这里必须真退出：迁移只在下次启动、数据库尚未打开时进行。
+	// 用 WM_CLOSE 会被托盘常驻解释成「收进托盘」，迁移就永远等不到。
+	a.quit()
 }
 
 func (a *App) showError(err error) {

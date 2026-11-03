@@ -68,6 +68,17 @@ var (
 	procSHBrowseForFolderW   = dllShell32.NewProc("SHBrowseForFolderW")
 	procSHGetPathFromIDListW = dllShell32.NewProc("SHGetPathFromIDListW")
 	procShellExecuteW        = dllShell32.NewProc("ShellExecuteW")
+	procShellNotifyIconW     = dllShell32.NewProc("Shell_NotifyIconW")
+
+	// 托盘相关：弹出菜单与图标
+	procCreatePopupMenu = dllUser32.NewProc("CreatePopupMenu")
+	procAppendMenuW     = dllUser32.NewProc("AppendMenuW")
+	procTrackPopupMenu  = dllUser32.NewProc("TrackPopupMenu")
+	procDestroyMenu     = dllUser32.NewProc("DestroyMenu")
+	procGetCursorPos    = dllUser32.NewProc("GetCursorPos")
+	procLoadImageW      = dllUser32.NewProc("LoadImageW")
+	procLoadIconW       = dllUser32.NewProc("LoadIconW")
+	procIsWindowVisible = dllUser32.NewProc("IsWindowVisible")
 
 	procCoTaskMemFree = dllOle32.NewProc("CoTaskMemFree")
 )
@@ -83,6 +94,7 @@ const (
 	swShowMinNoActivate = 7
 	swShow              = 5
 	swRestore           = 9
+	swHide              = 0
 
 	swpNoSize   = 0x0001
 	swpNoMove   = 0x0002
@@ -99,6 +111,39 @@ const (
 	wmLButtonDown   = 0x0201
 	wmMouseLeave    = 0x02A3
 	wmApp           = 0x8000
+
+	// 托盘
+	wmLButtonUp     = 0x0202
+	wmLButtonDblClk = 0x0203
+	wmRButtonUp     = 0x0205
+	wmNull          = 0x0000
+
+	nimAdd    = 0
+	nimModify = 1
+	nimDelete = 2
+
+	nifMessage = 0x0001
+	nifIcon    = 0x0002
+	nifTip     = 0x0004
+	nifInfo    = 0x0010
+
+	niifInfo = 0x0001
+
+	mfString    = 0x0000
+	mfChecked   = 0x0008
+	mfSeparator = 0x0800
+
+	tpmRightButton = 0x0002
+	tpmReturnCmd   = 0x0100
+
+	imageIcon      = 1
+	lrShared       = 0x8000
+	lrDefaultSize  = 0x0040
+	idiApplication = 32512
+
+	// 托盘图标的回调消息与图标 ID
+	msgTray    = wmApp + 2
+	trayIconID = 1
 
 	idcArrow = 32512
 

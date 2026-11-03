@@ -67,10 +67,10 @@ func TestMenuIDsAreStable(t *testing.T) {
 
 func TestActionFor(t *testing.T) {
 	cases := []struct {
-		name     string
-		id       uint32
-		want     Action
-		wantOk   bool
+		name   string
+		id     uint32
+		want   Action
+		wantOk bool
 	}{
 		{"显示窗口", IDShow, ActionShow, true},
 		{"切换采集", IDToggle, ActionToggleCollect, true},
@@ -100,6 +100,24 @@ func TestTooltipReflectsCollecting(t *testing.T) {
 	// 悬停提示是唯一能说明「这个图标是什么」的地方，必须带上程序名
 	if !contains(on, "键盘使用统计") || !contains(off, "键盘使用统计") {
 		t.Errorf("提示里应包含程序名: %q / %q", on, off)
+	}
+}
+
+func TestAutostartHintDiffersFromHiddenHint(t *testing.T) {
+	at, ab := AutostartHint()
+	ht, hb := HiddenHint()
+
+	if at == "" || ab == "" {
+		t.Fatal("自启提示的标题和内容都不能为空")
+	}
+	if at == ht || ab == hb {
+		t.Error("开机自启（窗口从没出现过）与手动关窗（窗口刚被收起）是两种场景，文案要区分开")
+	}
+	// 自启这条是「采集已经开始了」的唯一告知，必须说到后台与托盘
+	// （气泡的标题和正文会一起显示，所以两者合起来判断）
+	whole := at + ab
+	if !contains(whole, "后台") || !contains(whole, "托盘") {
+		t.Errorf("自启提示应说明在后台运行、入口在托盘，实际标题 %q 正文 %q", at, ab)
 	}
 }
 
