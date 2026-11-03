@@ -227,6 +227,7 @@ func TestComputeSettingsLayout(t *testing.T) {
 				{"导出 CSV", s.ExportBtn, SettingsHitExport},
 				{"清空数据", s.ClearBtn, SettingsHitClear},
 				{"打开数据目录", s.OpenDirBtn, SettingsHitOpenDataDir},
+				{"更改数据目录", s.ChangeDirBtn, SettingsHitChangeDataDir},
 			}
 
 			for _, it := range interactive {
@@ -263,6 +264,13 @@ func TestComputeSettingsLayout(t *testing.T) {
 			}
 			if s.AboutTop <= s.OpenDirBtn.Bottom {
 				t.Fatalf("关于区块应位于打开目录按钮下方：aboutTop=%d openDirBottom=%d", s.AboutTop, s.OpenDirBtn.Bottom)
+			}
+			// 「打开数据目录」和「更改数据目录」同一行，顺序固定，别在缩放后叠起来
+			if s.ChangeDirBtn.Left <= s.OpenDirBtn.Right {
+				t.Fatalf("更改目录按钮应在打开目录按钮右侧：open=%+v change=%+v", s.OpenDirBtn, s.ChangeDirBtn)
+			}
+			if s.ChangeDirBtn.Right > l.Content.Right {
+				t.Fatalf("更改目录按钮越出内容区：%+v content=%+v", s.ChangeDirBtn, l.Content)
 			}
 
 			// 空白处不命中任何控件

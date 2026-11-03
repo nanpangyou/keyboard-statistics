@@ -2,8 +2,6 @@
 
 package ui
 
-import "keyboard-statistics/internal/config"
-
 // paintSettings 画设置页。整页是自绘的，所有可点区域都来自 ComputeSettingsLayout，
 // 所以「画在哪」和「点到哪」永远一致。
 func (a *App) paintSettings(cv canvas, content Rect) {
@@ -45,14 +43,14 @@ func (a *App) paintSettings(cv canvas, content Rect) {
 	// —— 关于 ——
 	cv.text("关于", s.SectionAbout, fontSection, colText, dtVCenter|dtSingleLine|dtNoPrefix)
 	cv.button(s.OpenDirBtn, "打开数据目录", btnSecondary, hovered(SettingsHitOpenDataDir))
+	cv.button(s.ChangeDirBtn, "更改数据目录…", btnSecondary, hovered(SettingsHitChangeDataDir))
 
-	dir, err := config.Dir()
-	dirText := dir
-	if err != nil {
+	dirText := a.opt.DataDir
+	if dirText == "" {
 		dirText = "（无法定位数据目录）"
 	}
 	pad := px(baseSetPad, a.scale)
-	for i, line := range aboutLines(a.opt.Version, dirText) {
+	for i, line := range aboutLines(a.opt.Version, dirText, a.opt.DataDirSource) {
 		r := Rect{
 			s.Content.Left + pad,
 			s.AboutTop + int32(i)*s.LineH,

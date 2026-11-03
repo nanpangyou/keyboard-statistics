@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +71,13 @@ type Options struct {
 	ExePath        string
 	Autostart      config.Registry
 	StartMinimized bool
+
+	// DataDir 是当前实际使用的数据目录，DataDirSource 说明它从哪来
+	// （便携模式 / 用户指定 / 默认），两者都直接展示在设置页。
+	DataDir       string
+	DataDirSource string
+	// SettingsStore 用来持久化「自定义数据目录」；为 nil 表示当前环境存不了。
+	SettingsStore config.SettingStore
 }
 
 // settingsState 是设置页里不来自数据库的那部分状态。
@@ -132,6 +140,14 @@ func New(opts Options, svc *service.Service) *App {
 		page:  pageOverview,
 		scale: 1,
 	}
+}
+
+// ShowFatal 把启动阶段的致命错误显示给用户。
+//
+// 用 -H windowsgui 编译后没有控制台，光 os.Exit(1) 用户看到的就是「双击没反应」。
+// 数据目录不可写、数据库损坏这类问题必须弹窗说清楚，否则无从排查。
+func ShowFatal(text string) {
+	messageBox(0, text, windowTitle, mbOK|mbIconError)
 }
 
 // Run 创建窗口并进入消息循环，直到窗口关闭才返回。
@@ -353,6 +369,8 @@ func (a *App) onClick(lParam uintptr) {
 		a.clearData()
 	case SettingsHitOpenDataDir:
 		a.openDataDir()
+	case SettingsHitChangeDataDir:
+		a.changeDataDir()
 	}
 }
 
@@ -528,9 +546,9 @@ func (a *App) clearData() {
 }
 
 func (a *App) openDataDir() {
-	dir, err := config.Dir()
-	if err != nil {
-		a.showError(err)
+	dir := a.opt.DataDir
+	if dir == "" {
+		a.showError(fmt.Errorf("无法定位数据目录"))
 		return
 	}
 	// 目录可能还不存在（用户从没启动过采集），先建出来再打开。
@@ -541,6 +559,57 @@ func (a *App) openDataDir() {
 	if err := shellOpen(dir); err != nil {
 		a.showError(err)
 	}
+}
+
+// changeDataDir 让用户挑一个新目录放统计数据。
+//
+// 这里只写设置、不搬文件：此刻数据库正开着，Windows 不允许搬走被占用的文件，
+// 强行先关库再搬会让界面停在「服务已关闭」的半死状态。
+// 真正的迁移放到下次启动、数据库尚未打开时做（见 cmd/app/main.go）。
+func (a *App) changeDataDir() {
+	if a.opt.SettingsStore == nil {
+		messageBox(a.hwnd, "当前环境无法保存设置，暂时不能更改数据目录。",
+			"更改数据目录", mbOK|mbIconWarning)
+		return
+	}
+
+	dir, ok := browseForFolder(a.hwnd, "选择新的数据目录")
+	if !ok {
+		return
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" || strings.EqualFold(filepath.Clean(dir), filepath.Clean(a.opt.DataDir)) {
+		return
+	}
+
+	// 先验证再询问：让用户在「确定」之前就知道这个目录能不能用。
+	if err := config.EnsureWritable(dir); err != nil {
+		a.showError(fmt.Errorf("这个目录不能写：\n%v", err))
+		return
+	}
+	dbPath := filepath.Join(dir, "stats.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		a.showError(fmt.Errorf("这个目录里已经有统计数据了：\n%s\n\n请换一个空目录。", dbPath))
+		return
+	}
+
+	answer := messageBox(a.hwnd, fmt.Sprintf(
+		"数据目录将改为：\n\n%s\n\n"+
+			"现有统计数据会在下次启动时自动搬过去。\n"+
+			"设置完成后程序会退出，请重新打开。\n\n确定要更改吗？", dir),
+		"更改数据目录", mbYesNo|mbIconInfo|mbDefButton1)
+	if answer != idYes {
+		return
+	}
+
+	if err := config.SetDataDir(a.opt.SettingsStore, dir); err != nil {
+		a.showError(fmt.Errorf("保存数据目录设置: %w", err))
+		return
+	}
+
+	messageBox(a.hwnd, "数据目录已设为：\n\n"+dir+"\n\n程序即将退出，请重新打开以完成迁移。",
+		"更改数据目录", mbOK|mbIconInfo)
+	postMessage(a.hwnd, wmClose, 0, 0)
 }
 
 func (a *App) showError(err error) {

@@ -29,29 +29,66 @@ func main() {
 		return
 	}
 
-	dir, err := config.EnsureDir()
+	// exe 路径先拿到：数据目录解析要靠它判断是否处于便携模式。
+	exePath, exeErr := os.Executable()
+
+	// 设置存储打开失败不阻断启动：数据目录退回默认位置，程序照样能用。
+	store, storeErr := config.OpenSettingsStore()
+	if storeErr != nil {
+		store = nil
+	}
+
+	dir, source, err := config.ResolveDataDir(exePath, store)
 	if err != nil {
-		fatal(nil, err)
+		ui.ShowFatal("无法确定数据目录：\n\n" + err.Error())
+		os.Exit(1)
 	}
 
 	logger, closeLog := newLogger(dir)
 	defer closeLog()
 
+	if exeErr != nil {
+		logger.Warn("获取自身路径失败，便携模式与开机自启可能不可用", "error", exeErr)
+	}
+	if storeErr != nil {
+		logger.Warn("打开设置存储失败，自定义数据目录不可用", "error", storeErr)
+	}
+
+	if err := config.EnsureWritable(dir); err != nil {
+		ui.ShowFatal(fmt.Sprintf(
+			"数据目录无法写入：\n\n%s\n\n%s\n\n"+
+				"请在设置里换一个你有写权限的目录，或把程序装到非 Program Files 的位置。",
+			dir, err.Error()))
+		os.Exit(1)
+	}
+	logger.Info("数据目录", "path", dir, "source", source.String())
+
+	// 用户改过数据目录时，趁数据库还没打开把旧数据搬过来。
+	// 运行中迁移要先把库关掉再动文件，容易留下半死状态，启动时做最安全。
+	if source == config.SourceSetting {
+		if fallback, _, ferr := config.FallbackDir(exePath); ferr == nil {
+			if moved, merr := config.MigrateIfNeeded(fallback, dir); merr != nil {
+				logger.Warn("迁移旧数据失败，继续使用新目录", "from", fallback, "error", merr)
+			} else if moved {
+				logger.Info("已把旧数据迁移到新目录", "from", fallback, "to", dir)
+			}
+		}
+	}
+
 	svc, err := service.New(service.Options{
-		DBPath:    filepath.Join(dir, "stats.db"),
+		DBPath:    config.DBPathIn(dir),
 		StartHook: true,
 	})
 	if err != nil {
-		fatal(logger, err)
+		logger.Error("打开统计库失败", "error", err)
+		ui.ShowFatal("统计数据无法打开：\n\n" + err.Error())
+		os.Exit(1)
 	}
 
 	if err := svc.Start(); err != nil {
-		fatal(logger, err)
-	}
-
-	exePath, err := os.Executable()
-	if err != nil {
-		logger.Warn("获取自身路径失败，开机自启可能不可用", "error", err)
+		logger.Error("启动采集失败", "error", err)
+		ui.ShowFatal("键盘采集启动失败：\n\n" + err.Error())
+		os.Exit(1)
 	}
 
 	reg, err := config.OpenRunRegistry()
@@ -65,6 +102,9 @@ func main() {
 		ExePath:        exePath,
 		Autostart:      reg,
 		StartMinimized: *autostart,
+		DataDir:        dir,
+		DataDirSource:  source.String(),
+		SettingsStore:  store,
 	}, svc)
 
 	application.Run()
@@ -73,13 +113,6 @@ func main() {
 	if err := svc.Close(); err != nil {
 		logger.Error("退出时关闭服务失败", "error", err)
 	}
-}
-
-func fatal(logger *slog.Logger, err error) {
-	if logger != nil {
-		logger.Error("启动失败", "error", err)
-	}
-	os.Exit(1)
 }
 
 // newLogger 建一个写文件的 slog，按大小做一次简单轮转。

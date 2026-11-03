@@ -83,7 +83,7 @@ func TestRangeSummary(t *testing.T) {
 
 // 关于区块的文案是「隐私承诺」的一部分，缺行就是没做到，所以按行断言。
 func TestAboutLines(t *testing.T) {
-	lines := aboutLines("0.1.0-dev", `C:\Users\me\AppData\Local\keyboard-statistics`)
+	lines := aboutLines("0.1.0-dev", `C:\Users\me\AppData\Local\keyboard-statistics`, "便携模式（程序目录）")
 	if len(lines) < 4 {
 		t.Fatalf("关于文案只有 %d 行，期望至少 4 行：%v", len(lines), lines)
 	}
@@ -91,7 +91,7 @@ func TestAboutLines(t *testing.T) {
 		t.Fatalf("首行应含版本号，得到 %q", lines[0])
 	}
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"不记录", "不联网", `C:\Users\me\AppData\Local\keyboard-statistics`} {
+	for _, want := range []string{"不记录", "不联网", `C:\Users\me\AppData\Local\keyboard-statistics`, "存放方式：便携模式（程序目录）"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("关于文案缺少 %q，实际为：\n%s", want, joined)
 		}

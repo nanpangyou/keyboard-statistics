@@ -129,6 +129,7 @@ const (
 	mbIconError   = 0x0010
 	mbIconWarning = 0x0030
 	mbIconInfo    = 0x0040
+	mbDefButton1  = 0x0000
 	mbDefButton2  = 0x0100
 	idYes         = 6
 

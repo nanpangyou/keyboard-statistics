@@ -190,6 +190,7 @@ const (
 	SettingsHitExport
 	SettingsHitClear
 	SettingsHitOpenDataDir
+	SettingsHitChangeDataDir
 )
 
 // SettingsLayout 是设置页的控件位置。
@@ -214,6 +215,7 @@ type SettingsLayout struct {
 
 	SectionAbout Rect
 	OpenDirBtn   Rect
+	ChangeDirBtn Rect
 
 	AboutTop int32
 	LineH    int32
@@ -264,6 +266,10 @@ func ComputeSettingsLayout(content Rect, scale float64) SettingsLayout {
 	s.SectionAbout = Rect{x, y, right, y + titleH}
 	y += titleH
 	s.OpenDirBtn = Rect{x, y, x + btnW, y + btnH}
+	s.ChangeDirBtn = Rect{
+		x + btnW + px(baseButtonGap, scale), y,
+		x + btnW + px(baseButtonGap, scale) + px(baseWideButtonW, scale), y + btnH,
+	}
 	y += btnH + px(baseAboutGap, scale)
 	s.AboutTop = y
 
@@ -283,6 +289,8 @@ func (s SettingsLayout) Hit(x, y int32) SettingsHit {
 		return SettingsHitClear
 	case s.OpenDirBtn.Contains(x, y):
 		return SettingsHitOpenDataDir
+	case s.ChangeDirBtn.Contains(x, y):
+		return SettingsHitChangeDataDir
 	}
 	return SettingsHitNone
 }

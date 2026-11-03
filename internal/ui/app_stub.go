@@ -3,6 +3,9 @@
 package ui
 
 import (
+	"fmt"
+	"os"
+
 	"keyboard-statistics/internal/config"
 	"keyboard-statistics/internal/service"
 )
@@ -18,6 +21,9 @@ type Options struct {
 	ExePath        string
 	Autostart      config.Registry
 	StartMinimized bool
+	DataDir        string
+	DataDirSource  string
+	SettingsStore  config.SettingStore
 }
 
 // App 在非 Windows 平台没有窗口，只用来让调用方代码保持可编译。
@@ -28,3 +34,6 @@ func New(opts Options, svc *service.Service) *App { return &App{} }
 
 // Run 立即返回：没有窗口可跑。
 func (a *App) Run() {}
+
+// ShowFatal 在非 Windows 平台把启动错误写到标准错误。
+func ShowFatal(text string) { fmt.Fprintln(os.Stderr, text) }

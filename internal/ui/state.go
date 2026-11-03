@@ -68,15 +68,20 @@ func rangeSummary(from, to string, days int) string {
 
 // aboutLines 是「关于」区块的文案。
 //
-// 这四行同时承担隐私说明的职责（只记什么、不记什么、数据在哪、不联网），
+// 这几行同时承担隐私说明的职责（只记什么、不记什么、数据在哪、不联网），
 // 改文案时不要删掉任何一类信息。
-func aboutLines(version, dir string) []string {
-	return []string{
+// source 非空时额外说明数据目录是怎么定的，用户改过目录后能一眼看清。
+func aboutLines(version, dir, source string) []string {
+	lines := []string{
 		"键盘使用统计 v" + version,
 		"只记录键码、次数、日期与小时，不记录任何输入内容。",
 		"不记录按键顺序、窗口标题、应用名；不联网，数据只在本机。",
 		"数据目录：" + dir,
 	}
+	if source != "" {
+		lines = append(lines, "存放方式："+source)
+	}
+	return lines
 }
 
 // onboardingText 是首次启动说明框的文案。
