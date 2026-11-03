@@ -147,6 +147,20 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   `-H windowsgui` 下没有控制台，用户只会看到「双击没反应」。
 - 换数据目录时**搬文件只在启动早期做**（数据库尚未打开）：运行中 SQLite 持有文件句柄，
   Windows 不允许移动；先关库再搬会让界面停在「服务已关闭」的半死状态。
+- **托盘常驻**：程序在通知区域有常驻图标（`internal/ui/tray_windows.go`），
+  回调消息是 `msgTray`（`wmApp + 2`），菜单逻辑在 `internal/tray`（纯逻辑，有测试）。
+- **`WM_CLOSE` 现在的语义是「收进托盘」，不是退出**。要退出必须走 `a.quit()`
+  （内部 `DestroyWindow`）。任何「保存后退出程序」的流程都不许再 `postMessage(wmClose)`，
+  否则那次退出会变成隐藏，后续动作永远等不到（改数据目录踩过这个坑）。
+- 托盘图标必须在 `cleanup()` 里 `trayRemove()`，否则进程结束后图标会残留到鼠标划过。
+- 托盘放不上时要**回退成关窗即退出**，不能把窗口藏起来又没有图标入口——
+  那样用户只能去任务管理器。判断依据就是 `a.trayAdded`。
+- **升级握手**：安装器替换文件前会给程序发一条注册消息 `KeyboardStatistics.QuitForUpgrade`
+  （`RegisterWindowMessage`，两个进程注册同一字符串即得到同一消息号），程序收到后走正常退出。
+  因为 `WM_CLOSE` 已经不可用于「请退出」——Restart Manager 发的也是它，程序只会收进托盘，
+  安装器干等 30 秒再强杀，还会丢掉没落库的计数（实测耗时 32s → 握手后 5s）。
+  字符串两侧必须逐字一致：`internal/tray.QuitMessageName` ↔ `scripts/installer.iss` 的
+  `QuitForUpgradeMsg`，`internal/tray` 有测试盯着这个常量。
 
 ## 打包与发布
 
