@@ -152,6 +152,24 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   图标是 `assets/app.ico`（9 档尺寸，`scripts/make-icon.py` 从设计稿生成），
   经 `winres.json` 的 `RT_GROUP_ICON` 嵌进 exe；托盘用 `LoadImageW(module, 1, ...)` 取它，
   取不到才退回 `IDI_APPLICATION`——**别删 `winres.json` 里那段，删了托盘就变系统默认图标**。
+- **界面线程上不许做会阻塞的事**：刷新路径里每 2 秒读 3 次注册表这种「顺手」也要删掉
+  （`applyPendingSnapshot` 里踩过）。已知仍在界面线程上的可疑调用：`svc.SetCollecting`
+  的 meta 写库、`ClearData`、`ExportCSV`、托盘那几个 `Shell_NotifyIcon`（Explorer 忙时是
+  同步跨进程调用）。要动它们时优先挪到协程，别让界面线程去等。
+- **界面卡死要有现场**：`internal/ui/watchdog_windows.go` 每 2 秒用 `SendMessageTimeoutW`
+  发一条 `WM_NULL` 当心跳，超时就先 flush 计数、再写全部 goroutine 栈到日志（走
+  `Options.OnUIStall`）。节流逻辑在 `stall.go`（纯类型，有测试）。
+  **进程从外面看不出卡死**：线程全是 `WaitReason=UserRequest`、CPU 0，和「安静等消息」一样，
+  `Process.Responding` 还会骗你，只有 `IsHungAppWindow` 说真话——所以别删这个看门狗。
+- **收进托盘前必须 `SendMessage(WM_CANCELMODE)`**：托盘菜单是模态的，窗口藏起来之后
+  菜单会留在屏幕上既点不到也关不掉（实测过）。同理，别在窗口隐藏时弹任何模态框。
+- **界面读的数据要把「还没落库」的部分算进来**：`collect.Collector.Peek()` 给一份不清空的
+  增量拷贝，`service.Snapshot` 按 `day BETWEEN from AND to` 并进去。落库是 30 秒一次的
+  批处理，只读数据库的话数字要等半分钟才动。并的时候**必须过滤时间范围**，
+  否则切到近 7 天/过去某天时会把今天的计数多算一遍。
+- **TOP 榜这类列表靠留白和列对齐撑层次**：`overviewRowCells` 里排名与键名之间的
+  `baseOvRankGap` 不是装饰——贴在一起时「1空格」「2E」会被读成一个词。改布局先改这个纯函数
+  和它的测试，再用 `PrintWindow` 截图确认。
 - **`WM_CLOSE` 的语义由用户设置决定**（`config.CloseAction`，存 HKCU 的 `CloseAction`）：
   `tray` = 收进托盘、`exit` = 直接退出、**没选过** = 弹一次选项框再记住。
   所以任何「保存后退出程序」的流程都不许再 `postMessage(wmClose)`，必须走 `a.quit()`，
@@ -181,6 +199,8 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 | `close_choice.py` | 首次关窗选项框的两个分支 + 选择与气泡标记有没有落盘 |
 | `close_behavior.py` | 已设好的三种关窗模式各自的反应 |
 | `tray_check.py` / `tray_probe.py` | 关窗隐藏/托盘唤醒、托盘图标是否真的注册（带对照窗口） |
+| `tray_menu_hang.py` | 托盘右键之后界面线程还响不响应（有没有被模态菜单卡死） |
+| `watch_hang.py` | 盯住运行中的窗口，记录「未响应」的时间段与那段 CPU |
 | `installer_prompt.py` | 升级/重装的确认框（连向导一起点完），是否与是否两条路 |
 | `autostart_silent.py` | 自启静默无提示 + 欢迎说明推迟到打开窗口 |
 | `handshake_timeline.py` | 升级握手到进程退出的时间线 |

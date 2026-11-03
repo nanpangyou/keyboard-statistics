@@ -17,6 +17,75 @@
 
 ---
 
+## 🥶 2026-11-03 · 界面卡死取证、实时数据、TOP 榜排版（v0.5.1）
+
+**🎯 做了什么**
+
+用户报了三件事：界面出现「应用程序没有响应」+ 托盘右键没反应、数据要等一分钟才更新、
+TOP 10 里排名数字贴着键名。逐条处理：
+
+1. **卡死的取证能力**（`internal/ui/watchdog_windows.go` + `stall.go`）
+   - 每 2 秒给窗口线程发一条 `WM_NULL`（`SendMessageTimeoutW`，超时 2 秒）。
+     这条消息必须由窗口线程处理完才返回，所以「没在超时内返回」就等于界面线程没在转消息。
+   - 判定卡住后：**先把内存里没落库的计数 flush 掉**（用户接下来多半会去任务管理器强杀），
+     再把 `runtime.Stack(buf, true)` 的完整 goroutine 栈写进 `app.log`。
+   - 节流用 `stallTracker`（纯类型，5 个用例）：第一次卡立刻写，之后每 30 秒重复一次，
+     恢复后重新武装。
+2. **实时数据**
+   - `collect.Collector.Peek()`：交出当前未落库增量的一份拷贝，**不清空**。
+   - `service.Snapshot` 把这份增量按 `day BETWEEN from AND to` 合并进按键/组合键/时段/每日总量/活跃秒数。
+     口径与 SQL 完全一致，越界增量丢掉（否则切到近 7 天时会把「今天」多算一遍）。
+   - 之前要等 30 秒的原因是界面只读数据库，而落库是 30 秒一次的批处理。
+3. **TOP 榜排版**（`overviewRowCells` / `overviewRowBar`，纯函数 + 测试）
+   - 排名列 20px 定宽右对齐，**与键名之间留 12px 空档**——之前是 0，"1空格"/"2E" 会被读成一个词。
+   - 四列各自对齐，行内加一条只覆盖键名列的浅色比例条（宽 = 本行次数 / 榜首），
+     颜色两档（榜首深一档），字号层次：排名小+灰、键名正文（榜首加粗）、次数正文、占比小+灰。
+   - 底部状态栏改成 `范围 · 天数 · 实时 · 时刻`。
+
+**🕳️ 踩了什么坑**
+
+- **卡死的进程用线程状态分辨不出来**：现场那个实例 8 个线程全是 `WaitReason=UserRequest`、CPU 0，
+  和「安静地等消息」长得一模一样；任务管理器里 `Responding` 甚至报 True，只有
+  `IsHungAppWindow` 会说真话。所以专门写了 `scripts/verify/watch_hang.py` 去盯它。
+- **用户那个实例没留下现场**：我在清理测试进程时把它一起杀了，事后 `FindWindowW` 已经找不到。
+  教训：拿到「卡死实例」的第一件事是取现场（栈/等待链），不是清理环境。
+- **`GetProcessTimes` 在 kernel32，不在 psapi**（第一次写监视脚本时踩了 `AttributeError`）。
+- **复现出一个真 bug 但不是用户那个**：托盘菜单开着时关窗，窗口藏起来了、菜单还留在屏幕上
+  （`hideToTray` 只 `ShowWindow(SW_HIDE)`）。修法是在隐藏之前 `SendMessage(WM_CANCELMODE)`，
+  实测菜单立刻消失、线程不卡。而用户那个实例里**没有** `#32768` 菜单窗口，所以是另一条路径，
+  真凶待 `app.log` 里的栈来指认。
+- **`TrackPopupMenu` 在自动化环境里看起来像卡死**：它是模态的，没人点就一直等；
+  但它的消息循环会转，`IsHungAppWindow` 仍可能报 True（因为嵌套在 `MessageBox` 的循环里）。
+  别拿它当卡死的证据，要看窗口列表里有没有 `#32768`。
+- **`Rect.Empty()` 会吃掉宽 0 的比例条**：比例条初始 `Right == Left`，用 `Empty()` 判断会直接丢掉，
+  只能判断高度。
+- **截图对比是这次效率最高的手段**：`PrintWindow(PW_RENDERFULLCONTENT)` 能把自绘窗口抓下来，
+  改一版拍一张，比盯着代码猜强得多。沙箱里注入的按键收不到（Low IL 进程的 LL 钩子拿不到
+  更高完整性级别进程的输入），所以界面数据是直接往便携目录的 `stats.db` 里灌的。
+
+**✅ 测试状态**
+
+- `gofmt -l cmd internal` 无输出；`go vet ./...` 干净；`go test ./...` 全绿，**166 个用例**（原 149）。
+- `go test -race ./internal/collect ./internal/service ./internal/ui` 通过（Peek/合并动了并发路径）。
+- 新增用例：`stall_test.go` 5 个、`snapshot_live_test.go` 4 个（实时/不重不漏/越界过滤）、
+  `collect_test.go` 3 个（Peek 不清空、快照独立、Flush 不受影响）、
+  `overview_row_layout_test.go` 5 个（间距/缩放/窄窗口/比例/钳制）、`TestRefreshSummary`。
+- 端到端：程序运行中往库里加 500 次按键，3 秒后卡片从 6,198 变成 6,698；
+  隐藏后右键开菜单再关窗，菜单立刻消失、无未响应、看门狗 0 条记录；
+  0.5.0 → 0.5.1 静默升级成功且哈希与产物一致。
+
+**➡️ 下一步**
+
+- **等用户回传 `app.log`**：再卡住时日志里会有 `界面无响应` + 完整栈，那条栈能直接指认真凶。
+  已知的可疑点（按可能性排）：`Shell_NotifyIcon` 在 Explorer 忙时是同步跨进程调用、
+  UI 线程上仍有的 SQLite 读写（`SetCollecting`/`ClearData`/`ExportCSV`）、
+  `TrackPopupMenu` 在窗口被隐藏后的残留。
+- 若确认是 `Shell_NotifyIcon`：把托盘通知挪到专用协程 + 队列，界面线程不再碰它。
+- 安装器界面仍是英文（缺 zh-CN 语言包，需要先经用户同意引入第三方 `.isl`）。
+- 16×16 托盘图标偏糊，可考虑单独做一版简化小图。
+
+---
+
 ## 🚪 2026-11-03 · 关窗可选、升级前确认、图标（v0.5.0）
 
 **🎯 做了什么**
