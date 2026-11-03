@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +119,11 @@ type App struct {
 	frameH    int32
 	fonts     map[fontID]syscall.Handle
 
+	// uiThreadID 是跑消息循环的那个 OS 线程，窗口的队列就挂在它上面。
+	// 看门狗拿它跟「窗口实际所属的线程」对一下，能一眼看出线程被调度器换掉了——
+	// 那会让 GetMessage 等错队列，界面从此不再处理任何消息。
+	uiThreadID uint32
+
 	page     pageID
 	scope    stats.Scope
 	hover    hoverTarget
@@ -196,7 +202,18 @@ func ActivateExisting() bool {
 }
 
 // Run 创建窗口并进入消息循环，直到窗口关闭才返回。
+//
+// 这里必须把当前协程钉在它现在所在的 OS 线程上，而且要在建窗口之前钉。
+// 原因：窗口的消息队列属于「创建它的那个线程」，GetMessage 只从「调用它的那个
+// 线程」的队列里取消息。Go 的调度器会把没钉住的协程挪到别的 OS 线程上去，
+// 一旦在建窗口后挪走，GetMessage 就等在了新线程的空队列上——窗口再也收不到
+// 任何队列消息（定时器不响、快照通知不到、界面不再重绘），而发给窗口的
+// SendMessage 又因为原线程没人取消息而超时。从外面看就是「未响应」、
+// CPU 0、托盘右键没反应，而且随机发生在启动后几十秒（实测就是这么挂的）。
 func (a *App) Run() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	// DPI 感知必须在建窗口之前设置，否则高分屏上坐标会被系统二次缩放。
 	setProcessDPIAware()
 
@@ -210,6 +227,9 @@ func (a *App) Run() {
 	a.closeAction = config.GetCloseAction(a.opt.SettingsStore)
 	a.trayHintShown = config.GetFlag(a.opt.SettingsStore, config.FlagTrayHintShown)
 	a.requestRefresh()
+
+	// 记下当前 OS 线程：窗口的队列就在它身上，看门狗用它验证线程没被换掉。
+	a.uiThreadID = getCurrentThreadID()
 
 	// 看门狗要在窗口建好之后、进入消息循环之前起来：卡住时它会留下现场。
 	go a.watchUIStall()

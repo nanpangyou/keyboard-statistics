@@ -53,7 +53,7 @@ func TestStallTrackerRepeatsWhileStalled(t *testing.T) {
 	}
 }
 
-// 恢复之后要重新武装：下一次卡住必须当成「第一次」立刻写。
+// 真的恢复（安静了超过一个 repeat）之后要重新武装：再卡住时立刻写。
 func TestStallTrackerRearmsAfterRecovery(t *testing.T) {
 	tr := newStallTracker(30 * time.Second)
 	now := time.Unix(100, 0)
@@ -67,18 +67,48 @@ func TestStallTrackerRearmsAfterRecovery(t *testing.T) {
 	if got := tr.StalledFor(now.Add(2 * time.Second)); got != 0 {
 		t.Fatalf("恢复后 StalledFor = %v，期望 0", got)
 	}
-	if !tr.Observe(now.Add(4*time.Second), false) {
-		t.Fatal("恢复后再次卡住，应当重新当成第一次立刻写栈")
+	if !tr.Observe(now.Add(40*time.Second), false) {
+		t.Fatal("恢复很久后再次卡住，应当立刻写栈")
 	}
 }
 
-// StalledFor 是给日志用的，要报出「已经卡了多久」。
-func TestStallTrackerReportsStalledDuration(t *testing.T) {
+// 探针会抖（成功一次又失败）。按「这次卡顿开始」节流的话，一次抖动就把闸门
+// 重新打开，实测能刷成每 4 秒一份 36KB 的 goroutine 栈，日志很快被撑爆。
+func TestStallTrackerFlappingDoesNotFlood(t *testing.T) {
+	tr := newStallTracker(30 * time.Second)
+	t0 := time.Unix(100, 0)
+
+	if !tr.Observe(t0, false) {
+		t.Fatal("第一次卡住没有要求写栈")
+	}
+	if tr.Observe(t0.Add(2*time.Second), true) {
+		t.Fatal("恢复的那一下不该写栈")
+	}
+	if tr.Observe(t0.Add(4*time.Second), false) {
+		t.Fatal("距上次写栈只有 4 秒，抖动不该再写一份")
+	}
+	if tr.Observe(t0.Add(6*time.Second), true) {
+		t.Fatal("恢复的那一下不该写栈")
+	}
+	if !tr.Observe(t0.Add(31*time.Second), false) {
+		t.Fatal("过了 repeat 就该再写一份，否则看不到卡顿的时间线")
+	}
+}
+
+// 日志里要能看出「已经卡了多久、这是第几次报告」，光写 0s 等于没说。
+func TestStallTrackerReportsDurationAndDumpCount(t *testing.T) {
 	tr := newStallTracker(30 * time.Second)
 	start := time.Unix(100, 0)
 
 	tr.Observe(start, false)
 	if got := tr.StalledFor(start.Add(7 * time.Second)); got != 7*time.Second {
 		t.Fatalf("StalledFor = %v，期望 7s", got)
+	}
+	if got := tr.Dumps(); got != 1 {
+		t.Fatalf("报告次数 = %d，期望 1", got)
+	}
+	tr.Observe(start.Add(30*time.Second), false)
+	if got := tr.Dumps(); got != 2 {
+		t.Fatalf("报告次数 = %d，期望 2", got)
 	}
 }

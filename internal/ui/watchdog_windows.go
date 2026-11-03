@@ -44,6 +44,22 @@ func (a *App) watchUIStall() {
 			if a.hwnd == 0 {
 				continue
 			}
+
+			// 窗口的队列属于创建它的线程。两者一旦不是同一个线程，
+			// GetMessage 就在等一个空队列，界面再怎么探都是「没回应」——
+			// 这种情形要单独指出来，不然拿着栈也会误判成「堵在某个调用里」。
+			if owner := windowThreadID(a.hwnd); owner != 0 && a.uiThreadID != 0 && owner != a.uiThreadID {
+				if !tr.Observe(now, false) {
+					continue
+				}
+				a.opt.OnUIStall(fmt.Sprintf(
+					"界面窗口属于线程 %d，但消息循环跑在线程 %d 上——线程被调度器换掉了，"+
+						"窗口从此收不到任何队列消息。这一般意味着运行消息循环的协程没有 LockOSThread。"+
+						"第 %d 次报告，goroutine 栈：\n%s",
+					owner, a.uiThreadID, tr.Dumps(), allStacks()))
+				continue
+			}
+
 			responded := sendMessageTimeout(a.hwnd, wmNull, stallProbeTimeoutMs)
 			if !tr.Observe(now, responded) {
 				continue
@@ -56,8 +72,9 @@ func (a *App) watchUIStall() {
 			}
 
 			a.opt.OnUIStall(fmt.Sprintf(
-				"界面线程卡住 %s（探针 %dms 无回应），goroutine 栈：\n%s",
-				tr.StalledFor(now).Round(time.Millisecond), stallProbeTimeoutMs, allStacks()))
+				"界面线程卡住 %s（探针 %dms 无回应，第 %d 次报告），goroutine 栈：\n%s",
+				tr.StalledFor(now).Round(time.Millisecond), stallProbeTimeoutMs,
+				tr.Dumps(), allStacks()))
 		}
 	}
 }
