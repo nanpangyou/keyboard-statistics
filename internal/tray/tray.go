@@ -14,15 +14,18 @@ const (
 	ActionShow Action = iota
 	// ActionToggleCollect 暂停或继续采集。
 	ActionToggleCollect
+	// ActionToggleCloseToTray 切换「关闭窗口时是收进托盘还是直接退出」。
+	ActionToggleCloseToTray
 	// ActionExit 正常退出（会把没落库的计数刷进去）。
 	ActionExit
 )
 
 // 菜单项 ID。窗口过程靠它们分发命令，改值等于改协议。
 const (
-	IDShow   uint32 = 1
-	IDToggle uint32 = 2
-	IDExit   uint32 = 3
+	IDShow        uint32 = 1
+	IDToggle      uint32 = 2
+	IDExit        uint32 = 3
+	IDCloseToTray uint32 = 4
 )
 
 // Item 是一个托盘菜单项。
@@ -33,11 +36,11 @@ type Item struct {
 	Checked   bool // 显示勾选标记，用来表示「当前处于这个状态」
 }
 
-// Menu 按当前采集状态给出右键菜单。
+// Menu 按当前采集状态与关窗行为给出右键菜单。
 //
-// 采集中的第 3 项是「暂停采集」，暂停时变成「继续采集」并打勾——
-// 托盘菜单最怕的就是看了不知道现在是开还是关。
-func Menu(collecting bool) []Item {
+// 两处状态都要反映到勾选上：采集中的第 3 项是「暂停采集」，暂停时变成「继续采集」并打勾；
+// 「关闭窗口时收进托盘」按实际设置打勾。托盘菜单最怕的就是看了不知道现在是什么状态。
+func Menu(collecting, closeToTray bool) []Item {
 	toggleLabel := "继续采集"
 	checked := true
 	if collecting {
@@ -48,6 +51,8 @@ func Menu(collecting bool) []Item {
 		{ID: IDShow, Label: "显示主窗口"},
 		{Separator: true},
 		{ID: IDToggle, Label: toggleLabel, Checked: checked},
+		{ID: IDCloseToTray, Label: "关闭窗口时收进托盘", Checked: closeToTray},
+		{Separator: true},
 		{ID: IDExit, Label: "退出"},
 	}
 }
@@ -59,6 +64,8 @@ func ActionFor(id uint32) (Action, bool) {
 		return ActionShow, true
 	case IDToggle:
 		return ActionToggleCollect, true
+	case IDCloseToTray:
+		return ActionToggleCloseToTray, true
 	case IDExit:
 		return ActionExit, true
 	}
@@ -92,11 +99,23 @@ func HiddenHint() (title, text string) {
 		fmt.Sprintf("窗口已收到托盘，统计继续进行。\n右键托盘图标可以暂停采集或退出。")
 }
 
-// AutostartHint 是开机自启、直接待在托盘里时的一次性提示。
+// AutostartHint 是开机自启时的一次性提示。
 //
-// 这种启动下窗口从头到尾没出现过，用户看不到任何东西，必须主动告知一次，
-// 否则就成了「不隐藏采集」的对立面。文案要和「手动关窗」那种情况区分开。
+// 注意：当前**没有**在自启时弹气泡（用户明确要求开机自启不要任何提示），
+// 这个文案留着是为了以后需要时不用重新设计，测试也仍然盯着它与 HiddenHint 的区别。
 func AutostartHint() (title, text string) {
 	return "键盘使用统计已在后台开始统计",
 		"点托盘图标可以查看统计；右键可以暂停采集或退出。"
+}
+
+// CloseChoice 是用户第一次点关闭按钮时弹的选项框文案。
+//
+// 系统按钮只有「是 / 否 / 取消」三个词，所以正文必须逐条说明各自代表什么，
+// 否则用户只能猜；结尾还要告诉他以后去哪儿改。
+func CloseChoice() (title, text string) {
+	return "关闭窗口后要怎么做？",
+		"是：收进托盘，统计继续进行\n" +
+			"否：退出程序，停止统计\n" +
+			"取消：先不关\n\n" +
+			"这个选择会记住；以后可以在托盘右键菜单里改。"
 }

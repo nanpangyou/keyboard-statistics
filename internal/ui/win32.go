@@ -174,14 +174,18 @@ const (
 
 	srcCopy = 0x00CC0020
 
-	mbOK          = 0x0000
-	mbYesNo       = 0x0004
-	mbIconError   = 0x0010
-	mbIconWarning = 0x0030
-	mbIconInfo    = 0x0040
-	mbDefButton1  = 0x0000
-	mbDefButton2  = 0x0100
-	idYes         = 6
+	mbOK           = 0x0000
+	mbYesNo        = 0x0004
+	mbYesNoCancel  = 0x0003
+	mbIconError    = 0x0010
+	mbIconQuestion = 0x0020
+	mbIconWarning  = 0x0030
+	mbIconInfo     = 0x0040
+	mbDefButton1   = 0x0000
+	mbDefButton2   = 0x0100
+	idYes          = 6
+	idNo           = 7
+	idCancel       = 2
 
 	bifReturnOnlyFSDirs = 0x0001
 	maxPath             = 260

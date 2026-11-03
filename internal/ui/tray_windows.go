@@ -3,9 +3,11 @@
 package ui
 
 import (
+	"log"
 	"syscall"
 	"unsafe"
 
+	"keyboard-statistics/internal/config"
 	"keyboard-statistics/internal/tray"
 )
 
@@ -127,7 +129,7 @@ func (a *App) trayPopupMenu() {
 	}
 	defer procDestroyMenu.Call(menu)
 
-	for _, it := range tray.Menu(a.svc.Collecting()) {
+	for _, it := range tray.Menu(a.svc.Collecting(), a.closeAction.ToTray()) {
 		if it.Separator {
 			procAppendMenuW.Call(menu, mfSeparator, 0, 0)
 			continue
@@ -158,8 +160,53 @@ func (a *App) trayPopupMenu() {
 		a.showFromTray()
 	case tray.ActionToggleCollect:
 		a.toggleCollecting()
+	case tray.ActionToggleCloseToTray:
+		a.toggleCloseToTray()
 	case tray.ActionExit:
 		a.quit()
+	}
+}
+
+// toggleCloseToTray 在托盘菜单里切换关窗行为。
+//
+// 关窗时那个选项框只会问一次，之后想改就得有个入口——托盘菜单是最顺手的地方，
+// 不用为了一个开关去翻设置页。
+func (a *App) toggleCloseToTray() {
+	a.setCloseAction(!a.closeAction.ToTray())
+}
+
+// askCloseAction 在用户第一次点关闭按钮时问一次该怎么做。
+//
+// 用户按了 X 却什么都不发生（也没关、也没提示）是最糟的体验，所以取消也要有反馈。
+func (a *App) askCloseAction() {
+	title, text := tray.CloseChoice()
+	switch messageBox(a.hwnd, text, title, mbYesNoCancel|mbIconQuestion) {
+	case idYes:
+		a.setCloseAction(true)
+		a.hideToTray()
+	case idNo:
+		a.setCloseAction(false)
+		a.quit()
+	default:
+		// 取消：窗口就留着，什么都不做
+	}
+}
+
+// setCloseAction 记住「关窗时是否收进托盘」，并同步托盘菜单的勾选状态。
+//
+// 存不下来（没有设置存储/注册表不可写）不阻断操作：这次的选择立即生效，
+// 只是下次启动会再问一遍——总比弹个错误框阻断关窗要好。
+func (a *App) setCloseAction(toTray bool) {
+	action := config.CloseExit
+	if toTray {
+		action = config.CloseToTray
+	}
+	a.closeAction = action
+	// 写不进去也不阻断：这次的选择已生效，代价只是下次启动会再问一遍。
+	// 界面层没有日志器，`-H windowsgui` 下这行也看不到——保留它是为了让
+	// `go run ./cmd/app` 调试时能发现。
+	if err := config.SetCloseAction(a.opt.SettingsStore, action); err != nil {
+		log.Printf("无法保存关窗行为（下次会再问一遍）: %v", err)
 	}
 }
 
@@ -179,8 +226,13 @@ func (a *App) hideToTray() {
 	showWindow(a.hwnd, swHide)
 
 	// 用户按 X 却发现程序没退出，必须立刻解释一次，否则会以为关不掉。
+	// 只弹「第一次」——这个标记存在设置里，跨启动也算数，不然每次开机都被弹一遍。
 	if !a.trayHintShown {
 		a.trayHintShown = true
+		if err := config.SetFlag(a.opt.SettingsStore, config.FlagTrayHintShown, true); err != nil {
+			// 存不下就退化成「每次启动弹一次」，比彻底不提示好
+			log.Printf("无法记住气泡提示已弹过: %v", err)
+		}
 		title, text := tray.HiddenHint()
 		a.trayBalloon(title, text)
 	}

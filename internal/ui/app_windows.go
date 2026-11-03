@@ -16,7 +16,6 @@ import (
 	"keyboard-statistics/internal/config"
 	"keyboard-statistics/internal/service"
 	"keyboard-statistics/internal/stats"
-	"keyboard-statistics/internal/tray"
 )
 
 const (
@@ -138,6 +137,8 @@ type App struct {
 	onboardPending bool
 	// wmQuitRequest 是安装器发来的「请退出，我要替换文件」消息号，0 表示没注册上。
 	wmQuitRequest uint32
+	// closeAction 是用户选的关窗行为；CloseAsk 表示还没选过，关窗时问一次再记住。
+	closeAction config.CloseAction
 }
 
 // New 记录参数并返回 App，此时还没有创建窗口。
@@ -198,6 +199,8 @@ func (a *App) Run() {
 	defer a.cleanup()
 
 	a.syncSettingsState()
+	a.closeAction = config.GetCloseAction(a.opt.SettingsStore)
+	a.trayHintShown = config.GetFlag(a.opt.SettingsStore, config.FlagTrayHintShown)
 	a.requestRefresh()
 
 	// 开机自启拉起时直接待在托盘里：不弹窗口、也不在任务栏占位。
@@ -206,9 +209,8 @@ func (a *App) Run() {
 	// 注册升级握手消息：安装器发来这条消息时，程序自己退出好让它替换文件。
 	a.wmQuitRequest = registerQuitMessage()
 	if a.opt.StartMinimized && a.trayAdded {
-		title, text := tray.AutostartHint()
-		a.trayBalloon(title, text)
-		// 开机时没人在电脑前，模态的欢迎框推迟到用户第一次打开窗口再弹。
+		// 开机自启不打扰用户：不弹窗口，也不弹任何气泡提示。
+		// 「已经在统计」这件事由托盘图标本身表达，用户主动打开窗口时再补欢迎说明。
 		a.onboardPending = true
 	} else {
 		a.show()
@@ -350,13 +352,20 @@ func (a *App) wndProc(h syscall.Handle, message uint32, wParam uintptr, lParam u
 		a.onTrayMessage(uintptr(lParam))
 		return 0
 	case wmClose:
-		// 托盘常驻：关窗只是收进托盘，采集继续。
-		// 但托盘没放上（极端情况）时必须真退出，否则程序既没窗口也没图标，用户只能去任务管理器。
-		if a.trayAdded {
-			a.hideToTray()
+		// 托盘没放上就只能真退出：否则既没窗口也没图标，用户只能去任务管理器。
+		if !a.trayAdded {
+			destroyWindow(h)
 			return 0
 		}
-		destroyWindow(h)
+		switch a.closeAction {
+		case config.CloseExit:
+			a.quit()
+		case config.CloseToTray:
+			a.hideToTray()
+		default:
+			// 还没选过：问一次，记住答案，下次不再打扰。
+			a.askCloseAction()
+		}
 		return 0
 	case wmDestroy:
 		postQuitMessage(0)
