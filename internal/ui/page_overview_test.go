@@ -140,6 +140,7 @@ func TestOverviewCardSpecsEmpty(t *testing.T) {
 
 // TOP 列表一行四个字段：序号 / 键名 / 次数 / 占比。键名必须走 stats.KeyName，
 // 否则同一颗键在概览、热力图、CSV 里可能显示成不同名字。
+// Raw 是给行内比例条用的原始次数，必须与显示用的 Count 同源。
 func TestOverviewKeyRows(t *testing.T) {
 	keys := []stats.KeyCount{
 		{VK: 0x41, Count: 60}, // A
@@ -150,8 +151,8 @@ func TestOverviewKeyRows(t *testing.T) {
 		t.Fatalf("行数 = %d，期望 2", len(rows))
 	}
 	want := []overviewRow{
-		{Rank: "1", Name: "A", Count: "60", Percent: "60%"},
-		{Rank: "2", Name: "空格", Count: "40", Percent: "40%"},
+		{Rank: "1", Name: "A", Count: "60", Percent: "60%", Raw: 60},
+		{Rank: "2", Name: "空格", Count: "40", Percent: "40%", Raw: 40},
 	}
 	for i := range want {
 		if rows[i] != want[i] {

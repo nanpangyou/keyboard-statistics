@@ -112,10 +112,13 @@ func (a *App) paintOverviewList(cv canvas, area Rect, title string, rows []overv
 	rowsArea := Rect{body.Left, body.Top + inset, body.Right, body.Bottom - inset}
 	rects := overviewRowRects(rowsArea, len(rows))
 
-	rankW := px(baseOvRankW, a.scale)
-	countW := px(baseOvCountW, a.scale)
-	pctW := px(baseOvPercentW, a.scale)
-	nameGap := px(baseOvRowGap, a.scale)
+	// 榜首次数是比例条的分母：条宽 = 本行 / 榜首，扫一眼就知道差距有多大。
+	var topCount int64
+	for _, row := range rows {
+		if row.Raw > topCount {
+			topCount = row.Raw
+		}
+	}
 
 	for i, row := range rows {
 		r := rects[i]
@@ -123,15 +126,22 @@ func (a *App) paintOverviewList(cv canvas, area Rect, title string, rows []overv
 			continue
 		}
 
-		rankRect := Rect{r.Left, r.Top, r.Left + rankW, r.Bottom}
-		pctRect := Rect{r.Right - pctW, r.Top, r.Right, r.Bottom}
-		countRect := Rect{pctRect.Left - countW, r.Top, pctRect.Left, r.Bottom}
-		nameRect := Rect{rankRect.Right, r.Top, countRect.Left - nameGap, r.Bottom}
+		rankRect, nameRect, countRect, pctRect := overviewRowCells(r, a.scale)
 
 		// 第一名用强调色 + 粗体，扫一眼就知道最常用的键是哪个。
 		rankColor, nameColor, nameFont := colTextOff, colText, fontBody
+		barColor := colOvBar
 		if i == 0 {
 			rankColor, nameFont = colAccent, fontBold
+			barColor = colOvBarTop
+		}
+
+		// 条先画、字后压：文字始终是主角，条只做背景暗示。
+		// 条只铺键名那一列——铺到数字下面会让「900」看起来像是被高亮了。
+		if !nameRect.Empty() {
+			if bar := overviewRowBar(nameRect, row.Raw, topCount, a.scale); !bar.Empty() {
+				cv.fill(bar, barColor)
+			}
 		}
 
 		cv.text(row.Rank, rankRect, fontSmall, rankColor, dtRight|dtVCenter|dtSingleLine|dtNoPrefix)

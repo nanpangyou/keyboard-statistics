@@ -36,11 +36,16 @@ const (
 	baseOvMaxLabelH = 16
 	baseOvBarIdleH  = 2
 
-	baseOvRankW    = 26
-	baseOvCountW   = 72
-	baseOvPercentW = 58
-	baseOvRowGap   = 8
+	baseOvRankW    = 20
+	baseOvCountW   = 64
+	baseOvPercentW = 46
+	// baseOvRankGap 是排名数字与键名之间的空档。
+	// 这个值不是装饰：贴着画时「1空格」「2E」会被读成一个词，榜单就没法扫读了。
+	baseOvRankGap  = 12
+	baseOvRowGap   = 14
 	baseOvRowInset = 4
+	// baseOvBarPadY 是行内比例条上下留的空，让条看起来是「一行的一部分」而不是一条下划线。
+	baseOvBarPadY = 6
 )
 
 // overviewTopN 是两张 TOP 榜的行数上限（docs/metrics.md §5）。
@@ -203,6 +208,73 @@ type overviewRow struct {
 	Name    string
 	Count   string
 	Percent string
+	// Raw 是没格式化过的原始次数，只用来算行内比例条的宽度
+	// （显示用的 Count 已经带了千分位/万/亿这种缩写，没法直接拿去算比例）。
+	Raw int64
+}
+
+// overviewRowCells 把一行横向切成四格：排名 / 名称 / 次数 / 占比。
+//
+// 四格之间必须有明确的空档：排行榜靠的是「竖着对齐、横着留白」，
+// 排名数字一旦贴住键名，读者会把两者当成一个词。
+func overviewRowCells(row Rect, scale float64) (rank, name, count, percent Rect) {
+	if row.Empty() {
+		return Rect{}, Rect{}, Rect{}, Rect{}
+	}
+
+	rankW := px(baseOvRankW, scale)
+	rankGap := px(baseOvRankGap, scale)
+	countW := px(baseOvCountW, scale)
+	percentW := px(baseOvPercentW, scale)
+	nameGap := px(baseOvRowGap, scale)
+
+	// 右侧两列先定位，它们贴着行的右边界右对齐。
+	percent = Rect{row.Right - percentW, row.Top, row.Right, row.Bottom}
+	count = Rect{percent.Left - countW, row.Top, percent.Left, row.Bottom}
+
+	rank = Rect{row.Left, row.Top, row.Left + rankW, row.Bottom}
+
+	nameLeft := rank.Right + rankGap
+	nameRight := count.Left - nameGap
+	if nameRight < nameLeft {
+		// 窗口窄到放不下键名时，交一个空矩形而不是左右颠倒的矩形：
+		// 颠倒的 Rect 会让 DrawText 画出看不见的乱码，比不画更难查。
+		name = Rect{nameLeft, row.Top, nameLeft, row.Bottom}
+		return rank, name, count, percent
+	}
+	name = Rect{nameLeft, row.Top, nameRight, row.Bottom}
+	return rank, name, count, percent
+}
+
+// overviewRowBar 是行内那条表示相对大小的横条：宽 = 本行次数 / 榜首次数。
+//
+// 光看数字要在脑子里做除法，一条横条能让人一眼扫出谁高谁低。
+func overviewRowBar(area Rect, count, top int64, scale float64) Rect {
+	if area.Empty() {
+		return Rect{}
+	}
+	padY := px(baseOvBarPadY, scale)
+	barTop, barBottom := area.Top+padY, area.Bottom-padY
+	if barBottom <= barTop {
+		return Rect{}
+	}
+	// 注意不能拿 Rect.Empty 判断这里：条是按宽度算出来的，初始宽度就是 0，
+	// Empty 会把它当成「没有」而直接丢掉。
+	bar := Rect{area.Left, barTop, area.Left, barBottom}
+
+	if top <= 0 || count <= 0 {
+		return bar // 宽 0：画不出来，但也不必特殊照顾
+	}
+
+	w := int32(int64(area.Width()) * count / top)
+	if w > area.Width() {
+		w = area.Width() // 脏数据（本行比榜首还大）不许溢出
+	}
+	if w < 2 {
+		w = 2 // 有次数就得看得见，1px 在浅色底上等于没有
+	}
+	bar.Right = bar.Left + w
+	return bar
 }
 
 // overviewPercent 按 docs/metrics.md §4 显示整数百分比；分母为 0 时是 0%。
@@ -223,6 +295,7 @@ func overviewKeyRows(keys []stats.KeyCount, total int64) []overviewRow {
 			Name:    stats.KeyName(k.VK),
 			Count:   formatKeyCount(k.Count),
 			Percent: overviewPercent(k.Count, total),
+			Raw:     k.Count,
 		})
 	}
 	return rows
@@ -241,6 +314,7 @@ func overviewComboRows(combos []stats.ComboCount, total int64) []overviewRow {
 			Name:    c.Combo,
 			Count:   formatKeyCount(c.Count),
 			Percent: overviewPercent(c.Count, total),
+			Raw:     c.Count,
 		})
 	}
 	return rows
