@@ -229,7 +229,11 @@ Start-Process .\bin\app.exe
 
 ### 9.7 托盘常驻
 
-能用脚本验的部分见 `bin/_testdata/tray_check.py`（关窗隐藏、托盘左键唤醒、单实例唤醒）。
+托盘相关的自动化脚本在 `scripts/verify/`，只用 Python 标准库的 `ctypes` 调 Win32 API，
+不需要装任何第三方包。
+
+能用脚本验的部分见 `scripts/verify/tray_check.py`（关窗隐藏、托盘左键唤醒、单实例唤醒），
+托盘图标是否真的注册用 `scripts/verify/tray_probe.py`（带对照窗口，结论才可信）。
 以下必须人眼确认：
 
 1. 启动后通知区域出现图标；**默认可能被收进「溢出区」**，要先把它拖到常显位置再测后面的步骤。
@@ -256,7 +260,7 @@ Start-Process .\bin\app.exe
       安装器退回到了 Restart Manager 超时强杀，最后几十秒的计数会丢。
     - 日志里出现 `RestartManager found an application using one of our files` 是正常的
       （安装器扫描文件时程序可能还没退完），关键在于**没有**出现重启提示、`exe` 大小确实变成了新版。
-    - 单独验证握手：`python bin/_testdata/handshake_timeline.py <exe> <数据目录>`，
+    - 单独验证握手：`python scripts/verify/handshake_timeline.py <exe> <数据目录>`，
       期望进程在 1 秒内退出。
 
 ### 9.8 单实例

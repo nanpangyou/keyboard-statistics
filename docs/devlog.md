@@ -48,7 +48,7 @@
 **✅ 测试状态**
 
 - 单测：`internal/tray` 6 个用例（菜单文案/顺序、ID 唯一与稳定、状态切换打勾、动作映射、两种气泡文案）。
-- 运行时（脚本 `bin/_testdata/tray_check.py`，连跑两轮全过）：
+- 运行时（脚本 `scripts/verify/tray_check.py`，连跑两轮全过）：
 
 | 场景 | 结果 |
 |---|---|
