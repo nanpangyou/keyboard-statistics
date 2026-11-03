@@ -45,6 +45,8 @@ var (
 	procFillRect           = dllUser32.NewProc("FillRect")
 	procMessageBoxW        = dllUser32.NewProc("MessageBoxW")
 	procPostMessageW       = dllUser32.NewProc("PostMessageW")
+	procSendMessageW       = dllUser32.NewProc("SendMessageW")
+	procSendMessageTimeout = dllUser32.NewProc("SendMessageTimeoutW")
 	procTrackMouseEvent    = dllUser32.NewProc("TrackMouseEvent")
 	procSetProcessDPIAware = dllUser32.NewProc("SetProcessDPIAware")
 	procGetDpiForWindow    = dllUser32.NewProc("GetDpiForWindow")
@@ -119,6 +121,7 @@ const (
 	wmLButtonDblClk = 0x0203
 	wmRButtonUp     = 0x0205
 	wmNull          = 0x0000
+	wmCancelMode    = 0x001F
 
 	nimAdd    = 0
 	nimModify = 1
@@ -137,6 +140,9 @@ const (
 
 	tpmRightButton = 0x0002
 	tpmReturnCmd   = 0x0100
+
+	smtoBlock       = 0x0001
+	smtoAbortIfHung = 0x0002
 
 	imageIcon      = 1
 	lrShared       = 0x8000
@@ -334,6 +340,19 @@ func invalidate(h syscall.Handle) { procInvalidateRect.Call(uintptr(h), 0, 0) }
 
 func postMessage(h syscall.Handle, message uint32, wParam, lParam uintptr) {
 	procPostMessageW.Call(uintptr(h), uintptr(message), wParam, lParam)
+}
+
+// sendMessageTimeout 给窗口发一条消息并等它处理完，超时就放弃。
+//
+// 返回值是「窗口线程有没有在超时前处理掉这条消息」：拿它当界面线程的心跳探针，
+// 比去猜「CPU 是 0 还是 100%」靠谱得多。SMTO_ABORTIFHUNG 让它在对面已经卡住时
+// 立刻返回，不必等满超时（线上诊断要的就是尽快拿到现场）。
+func sendMessageTimeout(h syscall.Handle, message uint32, timeoutMs uint32) bool {
+	var result uintptr
+	r, _, _ := procSendMessageTimeout.Call(
+		uintptr(h), uintptr(message), 0, 0,
+		smtoBlock|smtoAbortIfHung, uintptr(timeoutMs), uintptr(unsafe.Pointer(&result)))
+	return r != 0
 }
 
 // getMessage 返回 0 表示收到 WM_QUIT，-1 表示出错。

@@ -78,6 +78,10 @@ type Options struct {
 	DataDirSource string
 	// SettingsStore 用来持久化「自定义数据目录」；为 nil 表示当前环境存不了。
 	SettingsStore config.SettingStore
+
+	// OnUIStall 在界面线程卡住时被调用（参数是所有 goroutine 的栈）。
+	// 界面卡死时进程从外面看和「安静待着」没有区别，只有程序自己还能交出这份现场。
+	OnUIStall func(dump string)
 }
 
 // settingsState 是设置页里不来自数据库的那部分状态。
@@ -128,6 +132,9 @@ type App struct {
 	pending  *snapshotResult
 	fetching bool
 
+	// stopped 在窗口销毁时关闭，用来让看门狗等后台协程自己收工。
+	stopped chan struct{}
+
 	// 托盘图标。trayAdded 为假说明没能放上托盘（或已经摘掉），
 	// 这时关窗必须真的退出，不能把程序藏起来又没有任何入口。
 	trayIcon      syscall.Handle
@@ -146,11 +153,12 @@ type App struct {
 // 窗口留到 Run 里建：创建失败时才能先把错误提示出来，而不是在没有界面的情况下继续跑。
 func New(opts Options, svc *service.Service) *App {
 	return &App{
-		opt:   opts,
-		svc:   svc,
-		scope: stats.ScopeToday,
-		page:  pageOverview,
-		scale: 1,
+		opt:     opts,
+		svc:     svc,
+		scope:   stats.ScopeToday,
+		page:    pageOverview,
+		scale:   1,
+		stopped: make(chan struct{}),
 	}
 }
 
@@ -202,6 +210,9 @@ func (a *App) Run() {
 	a.closeAction = config.GetCloseAction(a.opt.SettingsStore)
 	a.trayHintShown = config.GetFlag(a.opt.SettingsStore, config.FlagTrayHintShown)
 	a.requestRefresh()
+
+	// 看门狗要在窗口建好之后、进入消息循环之前起来：卡住时它会留下现场。
+	go a.watchUIStall()
 
 	// 开机自启拉起时直接待在托盘里：不弹窗口、也不在任务栏占位。
 	// 托盘图标没放上就退回原来的「最小化显示」——否则窗口和图标都没有，用户找不到它。
@@ -281,6 +292,7 @@ func (a *App) cleanup() {
 	// 先摘托盘图标：进程结束后系统不会替我们清理，图标会一直残留到鼠标划过。
 	a.trayRemove()
 	killTimer(a.hwnd, refreshTimerID)
+	close(a.stopped)
 	for _, f := range a.fonts {
 		if f != 0 {
 			deleteObject(f)
@@ -525,7 +537,9 @@ func (a *App) applyPendingSnapshot() {
 		a.lastRefresh = res.at
 	}
 	a.collecting = res.collecting
-	a.syncSettingsState()
+	// 这里特地去掉了「每次刷新都从注册表重读自启状态」：那是每 2 秒 3 次注册表读，
+	// 而注册表只会被本进程改动（启动时同步一次、用户点复选框时同步一次就够了）。
+	// 界面线程上任何一次多余的系统调用，都是「未响应」的潜在来源。
 	invalidate(a.hwnd)
 }
 

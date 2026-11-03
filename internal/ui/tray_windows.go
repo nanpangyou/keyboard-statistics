@@ -223,6 +223,9 @@ func (a *App) onTrayMessage(lParam uintptr) {
 
 // hideToTray 把窗口收进托盘，但**不退出**：采集继续，进程常驻。
 func (a *App) hideToTray() {
+	// 先撤掉一切模态状态（尤其是正在弹出的托盘菜单）：
+	// 菜单是端着消息循环等的，窗口藏起来之后它就再没人点得到，会一直挂在那里。
+	procSendMessageW.Call(uintptr(a.hwnd), uintptr(wmCancelMode), 0, 0)
 	showWindow(a.hwnd, swHide)
 
 	// 用户按 X 却发现程序没退出，必须立刻解释一次，否则会以为关不掉。

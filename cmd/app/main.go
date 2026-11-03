@@ -130,6 +130,8 @@ func main() {
 		DataDir:        dir,
 		DataDirSource:  source.String(),
 		SettingsStore:  store,
+		// 界面卡死时把现场写进日志：进程从外面看只是「在等」，只有栈能说明堵在哪。
+		OnUIStall: func(dump string) { logger.Error("界面无响应", "stack", dump) },
 	}, svc)
 
 	application.Run()
