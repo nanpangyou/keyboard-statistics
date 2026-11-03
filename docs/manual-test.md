@@ -202,7 +202,7 @@ Start-Process .\bin\app.exe
 准备两个版本（`<新版本>` 必须比已装的版本高，否则无法确认二进制真的被替换）：
 
 ```powershell
-# 装旧的
+# 装旧的（安装包要先拷到工作区外，见 9.7 的沙箱说明）
 .\dist\keyboard-statistics-<旧>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="D:\ks-test" /TASKS="portablemode"
 # 用新的覆盖，故意不给 /DIR 和 /TASKS
 .\dist\keyboard-statistics-<新>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES
@@ -213,10 +213,29 @@ Start-Process .\bin\app.exe
    Inno 会跳过复制，看起来"成功"其实什么都没做，先用占位文件或跨版本验证）。
 3. `portable.txt` 还在、`data\` 里的统计还在。
 4. 卸载项仍是**一个**，`DisplayName` 里的版本号已更新。
-5. **程序正在运行时升级**：安装器应通过 Restart Manager 识别并关闭程序，然后替换文件，
-   日志里会出现 `RestartManager found an application using one of our files`；
-   升级后不应提示"需要重启系统"。
+5. **程序正在运行时升级**：安装器应自动关闭它并替换文件，日志里会出现
+   `RestartManager found an application using one of our files`；升级后不应提示"需要重启系统"，
+   也不需要用户手动去关程序。
 6. 交互式安装（不静默）：最后一页的「立即启动」勾选项要能把程序重新拉起来。
-7. 反例：已经装过一套、又**不卸载**直接装到另一个目录——注册表里只会留最后装的那套，
-   先前那套的文件会变成孤儿目录（Inno 的固有行为，不是 bug；文档里不要承诺"多套并存"）。
+7. **反例：显式指定另一个目录必须被拒绝。** `/DIR` 指向新目录时安装应**失败**（非 0 退出码），
+   新目录不能被创建，原目录的版本保持不变。这是「升级只允许原地」这条需求的守门测试：
+
+   ```powershell
+   .\dist\keyboard-statistics-<新>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="D:\ks-elsewhere"
+   # 期望：非 0 退出码；D:\ks-elsewhere 不存在；D:\ks-test 里的版本没变
+   ```
+8. **不要声明 `AppMutex`**：实测一旦声明，安装器会在启动阶段弹「程序正在运行，请先关掉」并停下等人操作，
+   静默模式下直接 `exit 1`（`/CLOSEAPPLICATIONS` 也救不了）。正确的是 `CloseApplications=force`。
+
+### 9.7 单实例
+
+1. 启动程序，确认窗口出现。
+2. 再双击一次同一个 exe：**不能出现第二个窗口/进程**，已有的窗口应被拉到前台；进程数保持 1。
+3. 用 `-autostart` 参数再启动一次：应**安静退出**，不抢焦点、不弹窗（模拟开机自启重复拉起）。
+4. 日志（`<数据目录>\app.log`）里应出现 `已有实例在运行，本次启动退出`。
+5. 关闭窗口后再启动：应能正常启动（互斥体随进程消失，不会留下死锁）。
+
+> ⚠️ **测可执行文件要先把 exe 拷到工作区外**（例如 `%TEMP%`）。
+> DSH 沙箱会把工作区内的可执行文件以 Low Integrity 运行，写 `HKCU` 和 `%LOCALAPPDATA%` 会被拒，
+> 安装包甚至会在启动阶段挂住——看起来像程序或脚本的 bug，其实是沙箱。
 

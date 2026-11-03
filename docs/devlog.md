@@ -17,6 +17,59 @@
 
 ---
 
+## 🔒 2026-11-03 · 单实例、升级只能原地、升级时自动关进程（v0.3.0）
+
+**🎯 做了什么**（三条需求，两条要改代码）：
+
+1. **单实例**：新包 `internal/single`，用 `CreateMutexW` 抢命名互斥体
+   （`KeyboardStatistics_SingleInstance`）。第二个实例把已有窗口拉到前台后安静退出；
+   `-autostart` 拉起时只退出、不抢焦点。
+2. **升级只允许原地**：`scripts/installer.iss` 里检测卸载注册表键拿原目录，
+   升级时用 `ShouldSkipPage` 隐藏「选择安装目录」页，再用 `PrepareToInstall` 兜底：
+   命令行显式 `/DIR` 指向别处就**直接拒绝安装**。
+3. **升级前自动关掉正在运行的实例**：`CloseApplications=force` + Restart Manager。
+
+**🕳️ 踩的坑（这一轮的坑比功能本身值钱）**：
+
+1. **`AppId` 少写一个花括号 = 变成另一个软件**。我为了在 `[Code]` 里拼卸载键名，
+   把写死的 `AppId={{A1C3...}` 改成 `AppId={{{#MyAppId}`——ISPP 展开后变成
+   `{A1C3E5F7-...-0C1D2E3F4A5B`（**缺右花括号**），于是 0.3.0 的 AppId 与 0.2.0 不同，
+   `UsePreviousAppDir` 自然认不出已安装 → 装到默认目录、留下两个卸载键。
+   症状极易误判成「`[Code]` 破坏了升级」。正确写法是 `AppId={{{#MyAppId}}`
+   （`{{` + 展开后的 GUID + `}`）。**验证手段**：装完后看卸载键名是不是
+   `{GUID}_is1`，少了 `}` 立刻能发现。
+2. **静默模式下向导页根本不存在**：第一版守卫用 `WizardDirValue` 比较目录，
+   结果一次正常升级被冤枉成「换目录」，`exit 7` 卡死。改用 `{param:DIR|}` 只看命令行。
+   教训：`PrepareToInstall` 里读任何 `WizardForm*` 都是不可靠的。
+3. **声明 `AppMutex` 会挡住静默升级**：装上之后安装器启动就弹
+   「Setup has detected that ... is currently running」，静默模式默认按 Cancel → `exit 1`，
+   `/CLOSEAPPLICATIONS` 也救不了（那个开关只管 Restart Manager）。
+   我们要的是「安装器替用户关掉」，所以**不声明 AppMutex**，改用 `CloseApplications=force`。
+4. **`GetLongName` 在 Inno Pascal Script 里不存在**（编译报 `Unknown identifier`）。
+   长短路径归一只能自己调 `GetLongPathNameW@kernel32.dll`。
+5. **测试夹具自己坑自己**：我往 `data\stats.db` 写了个 11 字节的纯文本假库，
+   程序启动后正确地拒绝打开并弹窗退出，被误读成「程序启动就崩」。测数据保留要用真库。
+6. 又一次从**工作区内**直接运行安装包 → 沙箱 Low IL 让它挂住 10 分钟。
+   规矩：**任何 exe/setup 先拷到 `%TEMP%` 再跑**，已写进 manual-test 9.7。
+
+**✅ 实测矩阵**（0.3.0 装好 → 启动 → 0.3.1 静默升级，安装包都在工作区外）：
+
+| 场景 | 结果 |
+|---|---|
+| 第二次启动 | 第二个进程退出码 0，存活实例数保持 1，日志 `已有实例在运行，本次启动退出` |
+| 静默升级，不给 `/DIR` | ✅ 装回原目录，默认目录没被创建 |
+| 静默升级，`/DIR` = 同一目录（长名形式） | ✅ 放行（`GetLongPathNameW` 归一后比较） |
+| 静默升级，`/DIR` = 别处 | ✅ `exit 7` 拒绝，新目录未被创建，卸载键仍只有 1 个 |
+| **程序运行中**静默升级 0.3.0→0.3.1 | ✅ RM 查到 `Keyboard usage statistics` 并自动关闭，exe 7,876,608→7,873,024，无重启提示 |
+| 升级后数据 | ✅ `portable.txt` 与 `data\stats.db` 保留 |
+
+**📌 已知边界**：交互式升级会走 `ShouldSkipPage` 隐藏目录页（无法自动化验证，需人工点一次）；
+静默升级不会自动重启程序（`[Run]` 带 `skipifsilent`），交互式最后一页有「立即启动」可勾。
+
+**➡️ 下一步**：托盘常驻；安装向导中文化；多实例互斥已经解决，但同一份库被两台不同用户共享的情况还没考虑。
+
+---
+
 ## ✅ 2026-11-03 · 覆盖安装 / 运行中升级实测（含一次误判的复盘）
 
 **🎯 做了什么**：把「用户已经装了旧版、又拿到新版安装包」这条路彻底测了一遍，覆盖七种情形。

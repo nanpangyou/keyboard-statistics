@@ -155,8 +155,22 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   **云桌面 / 远程桌面**（无 GPU 加速）实测能正常出窗口。
 - 安装包用 Inno Setup，脚本 `scripts/installer.iss`：`PrivilegesRequired=lowest`（按用户安装，
   允许自选目录），「便携模式」任务在 `{app}` 下创建 `portable.txt`。安装包不改变主程序行为。
+- **升级必须原地**：`AppId` 固定不变（改了就等于另一个软件，升级会装成两套）；
+  升级时隐藏目录选择页（`ShouldSkipPage`），并用 `PrepareToInstall` + `{param:DIR|}` 拒绝指向别处的 `/DIR`。
+  想换目录必须先卸载。
+- **`AppId` 的花括号要数清楚**：写成 `AppId={{{#MyAppId}}`（`{{` + 展开后的 GUID + `}`）。
+  少一个 `}` 会悄悄变成另一个 AppId，症状是「升级认不出已安装、装到默认目录」。
+  装完检查卸载键名必须是 `{GUID}_is1`。
+- **不要声明 `AppMutex`**：一旦声明，安装器会要求用户先手动关掉程序，静默安装直接 `exit 1`。
+  要「安装器替用户关掉」就用 `CloseApplications=force`（配合 Restart Manager，实测可自动关闭并替换文件）。
+- **单实例**：主程序启动时用 `internal/single` 抢命名互斥体，第二个实例激活已有窗口后退出。
+  互斥体名只在一处定义（`single.DefaultName`），**不要**把它接到安装包的 `AppMutex` 上。
 - 版本号注入 `main.version`，`--version` 能打印；发布产物命名 `keyboard-statistics-v1.2.0.exe`。
 - 每次发布更新 `CHANGELOG.md`，写清统计口径有没有变。
+- 本机 Inno Setup 是**按用户安装**的，`ISCC.exe` 在 `%LOCALAPPDATA%\Programs\Inno Setup 6\`，
+  不在 `Program Files`。
+- **在工作区内直接运行 exe / 安装包会被 DSH 沙箱以 Low Integrity 跑**（写不了 `HKCU` 与 `%LOCALAPPDATA%`，
+  安装包甚至会在启动阶段挂住）。测安装与升级一律先把产物拷到 `%TEMP%` 之类的**工作区外**目录再跑。
 
 ## Git 约定
 
