@@ -149,18 +149,44 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   Windows 不允许移动；先关库再搬会让界面停在「服务已关闭」的半死状态。
 - **托盘常驻**：程序在通知区域有常驻图标（`internal/ui/tray_windows.go`），
   回调消息是 `msgTray`（`wmApp + 2`），菜单逻辑在 `internal/tray`（纯逻辑，有测试）。
-- **`WM_CLOSE` 现在的语义是「收进托盘」，不是退出**。要退出必须走 `a.quit()`
-  （内部 `DestroyWindow`）。任何「保存后退出程序」的流程都不许再 `postMessage(wmClose)`，
+  图标是 `assets/app.ico`（9 档尺寸，`scripts/make-icon.py` 从设计稿生成），
+  经 `winres.json` 的 `RT_GROUP_ICON` 嵌进 exe；托盘用 `LoadImageW(module, 1, ...)` 取它，
+  取不到才退回 `IDI_APPLICATION`——**别删 `winres.json` 里那段，删了托盘就变系统默认图标**。
+- **`WM_CLOSE` 的语义由用户设置决定**（`config.CloseAction`，存 HKCU 的 `CloseAction`）：
+  `tray` = 收进托盘、`exit` = 直接退出、**没选过** = 弹一次选项框再记住。
+  所以任何「保存后退出程序」的流程都不许再 `postMessage(wmClose)`，必须走 `a.quit()`，
   否则那次退出会变成隐藏，后续动作永远等不到（改数据目录踩过这个坑）。
 - 托盘图标必须在 `cleanup()` 里 `trayRemove()`，否则进程结束后图标会残留到鼠标划过。
 - 托盘放不上时要**回退成关窗即退出**，不能把窗口藏起来又没有图标入口——
   那样用户只能去任务管理器。判断依据就是 `a.trayAdded`。
+- 「首次收进托盘」的气泡标记（`config.FlagTrayHintShown`）**要落盘**：只记内存等于每次启动都弹。
+  开机自启分支不许弹任何气泡或对话框（用户明确要求静默）。
 - **升级握手**：安装器替换文件前会给程序发一条注册消息 `KeyboardStatistics.QuitForUpgrade`
   （`RegisterWindowMessage`，两个进程注册同一字符串即得到同一消息号），程序收到后走正常退出。
   因为 `WM_CLOSE` 已经不可用于「请退出」——Restart Manager 发的也是它，程序只会收进托盘，
   安装器干等 30 秒再强杀，还会丢掉没落库的计数（实测耗时 32s → 握手后 5s）。
   字符串两侧必须逐字一致：`internal/tray.QuitMessageName` ↔ `scripts/installer.iss` 的
   `QuitForUpgradeMsg`，`internal/tray` 有测试盯着这个常量。
+- **安装器在程序运行时先问一句**（`InitializeSetup` + `AppIsRunning`）：交互模式弹确认框，
+  选「否」用 `Result := False` 干净退出；静默模式（`WizardSilent`）不问，直接走握手消息。
+  判断运行与否只能按**窗口标题**（`FindWindowW`）：托盘常驻时窗口可能被藏起来，
+  但句柄还在——这正好把「收在托盘里也算在运行」覆盖住。
+
+## 自动化验证脚本（`scripts/verify/`）
+
+界面/安装相关的行为没法写 Go 单测，用这批只用 `ctypes` 的 Python 脚本验（不引第三方包）：
+
+| 脚本 | 验什么 |
+|---|---|
+| `close_choice.py` | 首次关窗选项框的两个分支 + 选择与气泡标记有没有落盘 |
+| `close_behavior.py` | 已设好的三种关窗模式各自的反应 |
+| `tray_check.py` / `tray_probe.py` | 关窗隐藏/托盘唤醒、托盘图标是否真的注册（带对照窗口） |
+| `installer_prompt.py` | 升级/重装的确认框（连向导一起点完），是否与是否两条路 |
+| `autostart_silent.py` | 自启静默无提示 + 欢迎说明推迟到打开窗口 |
+| `handshake_timeline.py` | 升级握手到进程退出的时间线 |
+
+写这类脚本的两个坑：Inno 的确认框属于 `%TEMP%` 里的 `*-setup.tmp` **子进程**（按安装包 pid 找不到），
+向导窗口类名是 `TWizardForm` 而不是 `#32770`，按钮文案带 `&` 助记符。
 
 ## 打包与发布
 
