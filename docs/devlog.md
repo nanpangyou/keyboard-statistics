@@ -17,6 +17,53 @@
 
 ---
 
+## 🔧 2026-11-03 · 安装包（Inno Setup）：自选安装目录 + 便携模式，v0.2.0 发版
+
+**🎯 做了什么**：
+
+1. `scripts/installer.iss`：Inno Setup 6 脚本，`PrivilegesRequired=lowest`（按用户安装、不弹 UAC），
+   `DisableDirPage=no`（强制显示目录选择页）、`AllowRootDirectory=yes`（允许装到 `D:\` 根）。
+2. `scripts/portable.txt`：便携标记模板，随「便携模式」任务装进 `{app}`。
+3. 卸载逻辑：`{app}\data` 存在才动，**静默卸载一律保留数据**，交互时 `MB_DEFBUTTON2` 默认「否」。
+4. 产物：`dist\keyboard-statistics-v0.2.0.exe`（7.51 MB）+
+   `dist\keyboard-statistics-0.2.0-setup.exe`（4.49 MB）。
+
+**💡 为什么**：
+
+- 主程序是 `asInvoker`，装进 `C:\Program Files` 就写不了数据。所以安装包**按用户安装**，
+  目录默认 `{localappdata}\Programs\KeyboardStatistics`，但允许用户改成 D 盘——用户可写，数据就放得下。
+- 主程序路径故意**不用通配**：`dist\` 里同时有历史和当前产物，通配还会把 `*-setup.exe` 自己打包进去。
+  改成 `#define` + 编译期 `FileExists` 断言，缺产物直接编译失败。
+- 不勾便携模式时**不去删**已有的 `portable.txt`：静默删标记等于把用户数据源悄悄切走
+  （数据还在 `data\` 里，程序却不读了），比留一个多余文件危险得多。
+
+**🕳️ 踩的坑**：
+
+1. **DSH 沙箱把工作区内的可执行文件以 Low Integrity Level 运行**（实测：工作区内 IL=4096，
+   `%TEMP%` 下 IL=12288）。后果是：直接在 `dist\` 里跑安装包会在写 HKCU 卸载项时
+   `exit 4 / 拒绝访问`，看起来像脚本 bug，其实是沙箱。**要测就先把 exe/setup 拷到工作区外**。
+   同理，仓库内的 exe 手动验「能不能写 `%LOCALAPPDATA%`」也是失真的。
+2. winget 装的 Inno Setup **不在 `Program Files`**，而在 `%LOCALAPPDATA%\Programs\Inno Setup 6\`——
+   按用户级安装。找 `ISCC.exe` 要按这个路径找。
+3. Inno Setup 6.7.3 官方**不带** `ChineseSimplified.isl`，安装向导是英文。
+   没有自行下载第三方翻译文件（来源不可控），在脚本里留了「放好 .isl 后加一行即可」的注释。
+4. ISPP 的 `#error` **只吃字面量、不做字符串拼接**，所以断言语句里的版本号得手写，
+   改 `MyAppVersion` 时必须顺手改那一行——已在注释里标注。
+
+**✅ 测试状态**：
+
+- ISCC 编译 exit 0；安装包版本资源 0.2.0.0
+- 静默安装 5 种组合（带/不带便携任务、带/不带桌面图标、不给 `/DIR` 用默认值）全部 exit 0
+- **完整用户故事实测**（把 setup 拷到 `%TEMP%` 外跑）：静默安装勾便携 → `{app}\portable.txt` 存在 →
+  启动后数据写在 `{app}\data\`（`stats.db` + `app.log`）→ 假 `%LOCALAPPDATA%` 目录 **0 个文件** →
+  关窗零残留；静默卸载后 exe 与 `portable.txt` 删除、`data\` 保留
+- `go test ./... -count=1` 全绿；`go vet` 干净；`gofmt -l .` 无输出
+
+**➡️ 下一步**：安装向导中文化（等可信的 `.isl`）；覆盖安装/升级路径（`UsePreviousAppDir/Tasks`）还没专门验；
+多实例互斥；托盘常驻。
+
+---
+
 ## ✨ 2026-11-03 · 数据目录可配置：便携模式、自定义位置与启动期迁移
 
 **🎯 做了什么**：
