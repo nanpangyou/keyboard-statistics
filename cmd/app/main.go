@@ -63,10 +63,16 @@ func main() {
 		// 真发生了也宁可让用户能用，只留一条日志。
 		logger.Warn("单实例检查失败，继续启动", "error", lockErr)
 	case alreadyRunning:
-		logger.Info("已有实例在运行，本次启动退出", "autostart", *autostart)
-		// 自启拉起时不要抢焦点：开机就弹窗很烦，而且用户此刻并不在电脑前。
-		if !*autostart && !ui.ActivateExisting() {
-			ui.ShowInfo("键盘使用统计已经在运行了。\n\n请在任务栏里找到它的窗口。")
+		logger.Info("已有实例在运行，本次启动直接退出", "autostart", *autostart)
+		// 自启拉起时既不抢焦点也不提示：开机弹框会打断用户，而且多半没人看着。
+		// 手动双击时一定要有反馈，否则「点了图标却没反应」会让人以为程序坏了。
+		if !*autostart {
+			if ui.ActivateExisting() {
+				ui.ShowInfo("键盘使用统计已经在运行了。\n\n已经把它的窗口切到前面来了。")
+			} else {
+				ui.ShowInfo("键盘使用统计已经在运行了。\n\n它可能被收进了通知区域（托盘），" +
+					"在右下角找到图标点一下就能看到窗口。")
+			}
 		}
 		return
 	default:

@@ -37,7 +37,7 @@
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
 
@@ -58,7 +58,7 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.4.0.exe is missing. Run scripts\build.ps1 -Version 0.4.0 first.
+  #error dist artifact not found: dist\keyboard-statistics-v0.5.0.exe is missing. Run scripts\build.ps1 -Version 0.5.0 first.
 #endif
 
 [Setup]
@@ -149,12 +149,21 @@ function FindWindowW(lpClassName, lpWindowName: String): THandle;
 function PostMessageW(hWnd: THandle; Msg: Cardinal; wParam, lParam: Longint): Boolean;
   external 'PostMessageW@user32.dll stdcall';
 
+{ 程序现在是不是在运行。
+
+  按窗口标题找，而不是按窗口是否可见：托盘常驻之后窗口可能被藏起来了，
+  但句柄还在，照样能按标题找到——这正好覆盖「收在托盘里也算在运行」。 }
+function AppIsRunning: Boolean;
+begin
+  Result := FindWindowW('', MainWindowTitle) <> 0;
+end;
+
 { 请正在运行的程序自己退出，最多等 5 秒。
 
-  为什么不用 WM_CLOSE：托盘常驻之后「关闭窗口」只是收进托盘，程序不会退。
-  Restart Manager 只能干等三十秒再把进程强杀，这段时间里内存中还没落库的
-  计数会丢。所以改成发一条双方约定好的注册消息，程序收到后走正常退出流程
-  （会把缓存刷进数据库）——快、且不丢数据。 }
+  为什么不用 WM_CLOSE：托盘常驻之后「关闭窗口」只是收进托盘（或按用户的设置直接退出），
+  关窗这个动作已经不能表达「请退出」了。Restart Manager 只能干等三十秒再把进程强杀，
+  这段时间里内存中还没落库的计数会丢。所以改成发一条双方约定好的注册消息，
+  程序收到后走正常退出流程（会把缓存刷进数据库）——快、且不丢数据。 }
 procedure AskRunningAppToQuit;
 var
   Msg: Cardinal;
@@ -191,7 +200,27 @@ begin
   GPreviousDir := '';
   if RegQueryStringValue(HKCU, UninstallKeyName, 'InstallLocation', Dir) then
     GPreviousDir := RemoveBackslashUnlessRoot(Dir);
+
   Result := True;
+
+  { 程序在跑（不管窗口是露着还是收在托盘里）：先问一句再动手。
+    升级和重装都走这条路径——用户此刻可能正在用，直接杀进程会让人觉得莫名其妙。 }
+  if not AppIsRunning then
+    Exit;
+
+  if not WizardSilent then
+  begin
+    if MsgBox('键盘使用统计正在运行。' + #13#10#13#10 +
+              '继续安装需要先退出它（已经统计的按键会先保存好）。' + #13#10#13#10 +
+              '现在退出程序并继续安装吗？',
+              mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      Result := False;  { 干净退出，不弹错误框 }
+      Exit;
+    end;
+  end;
+  { 静默安装没人可问，直接请它退出——无人值守场景不该被弹框卡住。 }
+  AskRunningAppToQuit;
 end;
 
 { 升级时跳过「选择安装目录」页：目录只能是原来那个，不给用户改的机会。
