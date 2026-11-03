@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // 本文件只放「不碰 Win32 的界面判定与文案」：按钮该不该动注册表、状态该显示什么、
@@ -64,6 +65,18 @@ func rangeSummary(from, to string, days int) string {
 		s += fmt.Sprintf(" · 共 %d 天", days)
 	}
 	return s
+}
+
+// refreshSummary 是状态栏的完整文案：范围、天数、刷新方式与时间。
+//
+// 「实时」两个字是刻意写的：界面每 2 秒把「正在发生」的按键也并进来看，
+// 不写清楚，用户会以为要等落库（30 秒）才更新，白白怀疑数字不对。
+func refreshSummary(from, to string, days int, at time.Time) string {
+	s := rangeSummary(from, to, days)
+	if at.IsZero() {
+		return s
+	}
+	return s + " · 实时 · " + at.Format("15:04:05")
 }
 
 // aboutLines 是「关于」区块的文案。

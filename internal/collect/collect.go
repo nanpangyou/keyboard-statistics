@@ -132,6 +132,29 @@ func (c *Collector) Flush() Batch {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	b := c.batchLocked()
+
+	c.keys = make(map[keyBucket]int64)
+	c.comb = make(map[comboBucket]int64)
+	c.activitySec = make(map[string]int64)
+	c.firstPress = make(map[string]string)
+	c.lastPress = make(map[string]string)
+
+	return b
+}
+
+// Peek 返回当前还没落库的增量，但不清空。
+//
+// 界面要「所见即所得」：落库是 30 秒一次的批处理，只读数据库的话数字要等半分钟才动。
+// 这里交出去的是一份拷贝，界面拿去做加法即可，落库节奏完全不受影响。
+func (c *Collector) Peek() Batch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.batchLocked()
+}
+
+// batchLocked 把内存里的累加结果摊平成一批增量。调用方必须已持锁。
+func (c *Collector) batchLocked() Batch {
 	b := Batch{}
 	for k, v := range c.keys {
 		b.Keys = append(b.Keys, store.KeyDelta{Day: k.Day, Hour: k.Hour, VK: k.VK, Count: v})
@@ -156,12 +179,6 @@ func (c *Collector) Flush() Batch {
 			LastPress:  c.lastPress[day],
 		})
 	}
-
-	c.keys = make(map[keyBucket]int64)
-	c.comb = make(map[comboBucket]int64)
-	c.activitySec = make(map[string]int64)
-	c.firstPress = make(map[string]string)
-	c.lastPress = make(map[string]string)
 
 	return b
 }

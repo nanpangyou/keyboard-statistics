@@ -28,6 +28,9 @@ var (
 	colDangerLine  = rgb(0xE8, 0xC4, 0xBE)
 	colDangerHover = rgb(0xFA, 0xE3, 0xDF)
 	colStatusBg    = rgb(0xEE, 0xEE, 0xEE)
+	// TOP 榜行内的比例条：只是背景暗示，要浅到压在上面的黑字依然清楚。
+	colOvBar    = rgb(0xEC, 0xF1, 0xFC)
+	colOvBarTop = rgb(0xD9, 0xE4, 0xFA)
 )
 
 func rgb(r, g, b byte) uint32 {
@@ -300,8 +303,7 @@ func (a *App) paintStatusBar(cv canvas, l Layout) {
 		text = "读取数据失败：" + a.snapErr
 		color = colWarn
 	} else if !a.lastRefresh.IsZero() {
-		text = rangeSummary(a.snap.From, a.snap.To, a.snap.Days) +
-			" · 最后刷新 " + a.lastRefresh.Format("15:04:05")
+		text = refreshSummary(a.snap.From, a.snap.To, a.snap.Days, a.lastRefresh)
 	}
 
 	padded := Rect{

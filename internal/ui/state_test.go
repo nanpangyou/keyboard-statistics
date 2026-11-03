@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // 采集按钮文字必须跟着真实状态切换，否则用户点「暂停」后按钮还写着「暂停采集」。
@@ -78,6 +79,22 @@ func TestRangeSummary(t *testing.T) {
 				t.Fatalf("rangeSummary(%q,%q,%d) = %q，期望 %q", c.from, c.to, c.days, got, c.want)
 			}
 		})
+	}
+}
+
+// 状态栏要写明「实时」：数字是跟着按键走的，不是等落库才更新。
+func TestRefreshSummary(t *testing.T) {
+	at := time.Date(2026, 11, 3, 21, 58, 37, 0, time.Local)
+
+	got := refreshSummary("2026-11-03", "2026-11-03", 1, at)
+	want := "2026-11-03 ~ 2026-11-03 · 共 1 天 · 实时 · 21:58:37"
+	if got != want {
+		t.Fatalf("refreshSummary = %q，期望 %q", got, want)
+	}
+
+	// 还没取过数时不能编一个 00:00:00 出来
+	if got := refreshSummary("2026-11-03", "2026-11-03", 1, time.Time{}); got != "2026-11-03 ~ 2026-11-03 · 共 1 天" {
+		t.Fatalf("未刷新时 = %q，期望只报范围", got)
 	}
 }
 

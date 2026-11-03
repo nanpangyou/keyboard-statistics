@@ -231,6 +231,17 @@ func (s *Service) Snapshot(scope stats.Scope) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
+	// 把内存里还没落库的增量并进来。落库是 30 秒一次的批处理，
+	// 只读数据库的话界面得等半分钟才动一次；这里补上「正在发生」的那部分，
+	// 时间范围的过滤口径与上面的 SQL 完全一致（day BETWEEN from AND to）。
+	live := mergePending(keys, combos, daily, s.col.Peek(), from, to)
+	active += live.active
+
+	hourly := stats.HourlyDistribution(hours)
+	for i := range hourly {
+		hourly[i] += live.hours[i]
+	}
+
 	var total int64
 	for _, c := range keys {
 		total += c
@@ -249,10 +260,52 @@ func (s *Service) Snapshot(scope stats.Scope) (Snapshot, error) {
 		PeakCount:     peakCount,
 		TopKeys:       stats.TopKeys(keys, 10),
 		TopCombos:     stats.TopCombos(combos, 10),
-		Hourly:        stats.HourlyDistribution(hours),
+		Hourly:        hourly,
 		KeyCounts:     keys,
 		ComboCounts:   combos,
 	}, nil
+}
+
+// liveTotals 是「还没落库」那部分里无法原地并进 map 的两样东西。
+type liveTotals struct {
+	hours  [24]int64
+	active int64
+}
+
+// mergePending 把内存里的增量并进按时间范围查出来的结果。
+//
+// keys / combos / daily 原地累加（它们是 map，调用方直接拿去算总量、算 Top、算峰值）；
+// 时段和活跃秒数取不出来原地加，交给返回值。
+//
+// 越界的增量必须丢掉：内存里的桶可能属于「今天」，而用户正在看近 7 天或某个过去的日子，
+// 不过滤的话切换范围时会看到不该出现的数字。
+func mergePending(keys map[uint16]int64, combos map[string]int64, daily map[string]int64, b collect.Batch, from, to string) liveTotals {
+	var out liveTotals
+	inRange := func(day string) bool { return day >= from && day <= to }
+
+	for _, k := range b.Keys {
+		if !inRange(k.Day) {
+			continue
+		}
+		keys[k.VK] += k.Count
+		daily[k.Day] += k.Count
+		if k.Hour >= 0 && k.Hour < 24 {
+			out.hours[k.Hour] += k.Count
+		}
+	}
+	for _, c := range b.Combos {
+		if !inRange(c.Day) {
+			continue
+		}
+		combos[c.Combo] += c.Count
+	}
+	for _, a := range b.Activity {
+		if !inRange(a.Day) {
+			continue
+		}
+		out.active += a.Sec
+	}
+	return out
 }
 
 // ClearData 清空全部统计数据，但保留采集开关与引导标记。

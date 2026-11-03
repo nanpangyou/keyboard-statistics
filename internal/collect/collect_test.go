@@ -227,3 +227,47 @@ func TestResetDropsPressedState(t *testing.T) {
 		t.Fatalf("Reset 后不该残留修饰键状态，实际产生 %d 条组合: %v", n, b.Combos)
 	}
 }
+
+// Peek 是给界面实时取数用的：要能看到还没落库的增量，但不能把它取走。
+func TestPeekDoesNotConsumePending(t *testing.T) {
+	c, _ := newTestCollector(t)
+
+	c.KeyDown(0x41)
+	c.KeyUp(0x41)
+
+	first := c.Peek()
+	if keyCounts(first)[0x41] != 1 {
+		t.Fatalf("Peek 拿到 %v，期望 A=1", keyCounts(first))
+	}
+	if c.Pending() != 1 {
+		t.Fatalf("Peek 之后 Pending = %d，期望 1（取数不能把增量吃掉）", c.Pending())
+	}
+
+	// 再按一次，Peek 应该看到累计值；此时 Flush 仍要能拿到全部 2 次
+	c.KeyDown(0x41)
+	c.KeyUp(0x41)
+
+	second := c.Peek()
+	if keyCounts(second)[0x41] != 2 {
+		t.Fatalf("第二次 Peek 拿到 %v，期望 A=2", keyCounts(second))
+	}
+	if got := keyCounts(c.Flush())[0x41]; got != 2 {
+		t.Fatalf("Flush 拿到 %d，期望 2（Peek 不能影响落库）", got)
+	}
+}
+
+// Peek 返回的必须是快照：事后继续按键不能篡改已经交出去的那一份。
+func TestPeekReturnsIndependentCopy(t *testing.T) {
+	c, _ := newTestCollector(t)
+
+	c.KeyDown(0x41)
+	c.KeyUp(0x41)
+	snap := c.Peek()
+
+	c.KeyDown(0x41)
+	c.KeyUp(0x41)
+
+	if got := keyCounts(snap)[0x41]; got != 1 {
+		t.Fatalf("早先那份快照里的 A = %d，期望 1（不该被后来的按键改掉）", got)
+	}
+}
