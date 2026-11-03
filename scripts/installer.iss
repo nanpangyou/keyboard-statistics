@@ -37,9 +37,16 @@
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
+
+; AppId 去掉外层花括号的形式，单独定义一份，供 [Code] 拼卸载注册表键名用。
+; [Setup] 里写成 AppId={{{#MyAppId}} —— 数一下花括号：ISPP 把 {#MyAppId} 换成纯 GUID 后，
+; 剩下的 {{ 和末尾的 } 正好是 Inno 要求的转义写法（{{ 表示一个字面量 {）。
+; **少写一个 } 会变成另一个 AppId**，结果就是「升级认不出已安装」，实测会装到默认目录去。
+; 一旦发布就不能改这个 GUID，否则升级会被装成两套。
+#define MyAppId "A1C3E5F7-2B4D-4E6F-8A9B-0C1D2E3F4A5B"
 
 ; 源 exe：dist\keyboard-statistics-v<version>.exe（scripts\build.ps1 -Version <version> 的产物）
 #define MyAppSourceExe "..\dist\keyboard-statistics-v" + MyAppVersion + ".exe"
@@ -51,12 +58,20 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.2.0.exe is missing. Run scripts\build.ps1 -Version 0.2.0 first.
+  #error dist artifact not found: dist\keyboard-statistics-v0.3.0.exe is missing. Run scripts\build.ps1 -Version 0.3.0 first.
 #endif
 
 [Setup]
 ; AppId 一旦发布就不能改，否则升级会被装成两套。
-AppId={{A1C3E5F7-2B4D-4E6F-8A9B-0C1D2E3F4A5B}
+AppId={{{#MyAppId}}
+; 程序启动时会创建同名互斥体（internal/single 的 DefaultName），保证只有一个实例。
+; 但这里**故意不写 AppMutex**：一旦声明，安装器会在启动阶段弹「程序正在运行，请先关掉」
+; 并停下来等人操作——静默模式下直接失败（实测 exit 1，/CLOSEAPPLICATIONS 也救不了）。
+; 我们要的是「安装器替用户关掉再装」，所以交给下面的 CloseApplications + Restart Manager。
+;
+; 升级时强制关闭占用文件的程序（含本程序自己），不弹窗问，直接关掉再替换：
+; 程序没有未保存的数据，优雅关闭（WM_CLOSE）即可，关掉是安全的。
+CloseApplications=force
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
@@ -115,6 +130,83 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  { 检测到的「已安装目录」；空字符串表示这是一次全新安装。
+    升级必须留在原目录：换目录会变成两套并存，注册表只认最后装的那套，
+    先前那套的文件就成了没人管的孤儿目录——所以这里要拦住。 }
+  GPreviousDir: String;
+
+{ 上一套安装的卸载注册表键名。PrivilegesRequired=lowest 且非 64 位安装模式，
+  所以键就在 HKCU\Software 下，不会被重定向到 Wow6432Node。 }
+function UninstallKeyName: String;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}_is1';
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Dir: String;
+begin
+  GPreviousDir := '';
+  if RegQueryStringValue(HKCU, UninstallKeyName, 'InstallLocation', Dir) then
+    GPreviousDir := RemoveBackslashUnlessRoot(Dir);
+  Result := True;
+end;
+
+{ 升级时跳过「选择安装目录」页：目录只能是原来那个，不给用户改的机会。
+  全新安装仍然显示，这样第一次装的时候用户可以选到 D:\ 之类的盘。 }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = wpSelectDir) and (GPreviousDir <> '');
+end;
+
+{ 路径比较：卸载注册表里存的可能是 8.3 短名（C:\Users\USER29~1\...），
+  命令行给的是长名。Inno 脚本里没有 GetLongName，直接调 kernel32 归一成长名再比，
+  免得把一次正常的原地升级误判成「换目录」而拒绝安装。
+  转换失败（返回 0）时退回原样比较——宁可放过，也不要冤枉一次正常升级。 }
+function GetLongPathNameW(ShortPath: String; LongPath: String; BufSize: DWORD): DWORD;
+  external 'GetLongPathNameW@kernel32.dll stdcall';
+
+function NormalizeDir(const Dir: String): String;
+var
+  Buf: String;
+  Len: DWORD;
+begin
+  Result := RemoveBackslashUnlessRoot(Dir);
+  SetLength(Buf, 1024);
+  Len := GetLongPathNameW(Result, Buf, 1024);
+  if (Len > 0) and (Len < 1024) then
+  begin
+    SetLength(Buf, Len);
+    Result := RemoveBackslashUnlessRoot(Buf);
+  end;
+end;
+
+function SameDir(const A, B: String): Boolean;
+begin
+  Result := CompareText(NormalizeDir(A), NormalizeDir(B)) = 0;
+end;
+
+{ 兜底拦一道：静默安装不显示向导页，命令行 /DIR 仍然可能把目录换掉，
+  那就装出第二套了（实测：卸载注册表会改指向新目录，旧目录变成没人管的孤儿）。
+  与其留下两套，不如直接失败——失败信息里写清原目录在哪。
+
+  注意**不能**用 WizardDirValue 判断：静默模式下向导页压根没创建，
+  它返回的是 DefaultDirName，会把一次正常的原地升级冤枉死（实测失败在 exit 7）。
+  所以这里只看命令行究竟有没有显式给 /DIR。 }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Requested: String;
+begin
+  Result := '';
+  Requested := ExpandConstant('{param:DIR|}');
+  if (GPreviousDir <> '') and (Requested <> '') and not SameDir(Requested, GPreviousDir) then
+    Result := 'This is an upgrade: the program must stay in its existing folder.' + #13#10#13#10 +
+              'Existing:  ' + GPreviousDir + #13#10 +
+              'Requested: ' + Requested + #13#10#13#10 +
+              'Uninstall the old version first if you really want a different folder.';
+end;
+
 { 便携模式的数据目录（有 portable.txt 时程序写这里）。
   卸载完成后才问，避免用户删完数据又把卸载取消掉。 }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
