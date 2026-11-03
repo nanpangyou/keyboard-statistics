@@ -37,7 +37,7 @@
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.4.0"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
 
@@ -58,7 +58,7 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.3.0.exe is missing. Run scripts\build.ps1 -Version 0.3.0 first.
+  #error dist artifact not found: dist\keyboard-statistics-v0.4.0.exe is missing. Run scripts\build.ps1 -Version 0.4.0 first.
 #endif
 
 [Setup]
@@ -136,6 +136,47 @@ var
     先前那套的文件就成了没人管的孤儿目录——所以这里要拦住。 }
   GPreviousDir: String;
 
+const
+  { 主窗口标题。程序收在托盘里时窗口仍然存在，只是不可见，照样能按它找到。 }
+  MainWindowTitle = '键盘使用统计';
+  { 与 internal/tray 的 QuitMessageName 必须一字不差。 }
+  QuitForUpgradeMsg = 'KeyboardStatistics.QuitForUpgrade';
+
+function RegisterWindowMessageW(lpString: String): Cardinal;
+  external 'RegisterWindowMessageW@user32.dll stdcall';
+function FindWindowW(lpClassName, lpWindowName: String): THandle;
+  external 'FindWindowW@user32.dll stdcall';
+function PostMessageW(hWnd: THandle; Msg: Cardinal; wParam, lParam: Longint): Boolean;
+  external 'PostMessageW@user32.dll stdcall';
+
+{ 请正在运行的程序自己退出，最多等 5 秒。
+
+  为什么不用 WM_CLOSE：托盘常驻之后「关闭窗口」只是收进托盘，程序不会退。
+  Restart Manager 只能干等三十秒再把进程强杀，这段时间里内存中还没落库的
+  计数会丢。所以改成发一条双方约定好的注册消息，程序收到后走正常退出流程
+  （会把缓存刷进数据库）——快、且不丢数据。 }
+procedure AskRunningAppToQuit;
+var
+  Msg: Cardinal;
+  H: THandle;
+  I: Integer;
+begin
+  Msg := RegisterWindowMessageW(QuitForUpgradeMsg);
+  if Msg = 0 then
+    Exit;
+  H := FindWindowW('', MainWindowTitle);
+  if H = 0 then
+    Exit;  { 没在运行，直接装 }
+  PostMessageW(H, Msg, 0, 0);
+  for I := 1 to 25 do
+  begin
+    Sleep(200);
+    if FindWindowW('', MainWindowTitle) = 0 then
+      Exit;
+  end;
+  { 等到超时也没退：交给后面的 Restart Manager 兜底处理。 }
+end;
+
 { 上一套安装的卸载注册表键名。PrivilegesRequired=lowest 且非 64 位安装模式，
   所以键就在 HKCU\Software 下，不会被重定向到 Wow6432Node。 }
 function UninstallKeyName: String;
@@ -201,10 +242,16 @@ begin
   Result := '';
   Requested := ExpandConstant('{param:DIR|}');
   if (GPreviousDir <> '') and (Requested <> '') and not SameDir(Requested, GPreviousDir) then
+  begin
     Result := 'This is an upgrade: the program must stay in its existing folder.' + #13#10#13#10 +
               'Existing:  ' + GPreviousDir + #13#10 +
               'Requested: ' + Requested + #13#10#13#10 +
               'Uninstall the old version first if you really want a different folder.';
+    Exit;
+  end;
+
+  { 校验都过了，才请正在运行的程序退场：文件最早在这一步之后才会被替换。 }
+  AskRunningAppToQuit;
 end;
 
 { 便携模式的数据目录（有 portable.txt 时程序写这里）。

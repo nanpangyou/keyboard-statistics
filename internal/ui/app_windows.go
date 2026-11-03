@@ -136,6 +136,8 @@ type App struct {
 	trayHintShown bool
 	// onboardPending 为真表示「开机自启起就没露过面，欢迎说明还欠着」。
 	onboardPending bool
+	// wmQuitRequest 是安装器发来的「请退出，我要替换文件」消息号，0 表示没注册上。
+	wmQuitRequest uint32
 }
 
 // New 记录参数并返回 App，此时还没有创建窗口。
@@ -201,6 +203,8 @@ func (a *App) Run() {
 	// 开机自启拉起时直接待在托盘里：不弹窗口、也不在任务栏占位。
 	// 托盘图标没放上就退回原来的「最小化显示」——否则窗口和图标都没有，用户找不到它。
 	a.trayInit()
+	// 注册升级握手消息：安装器发来这条消息时，程序自己退出好让它替换文件。
+	a.wmQuitRequest = registerQuitMessage()
 	if a.opt.StartMinimized && a.trayAdded {
 		title, text := tray.AutostartHint()
 		a.trayBalloon(title, text)
@@ -298,6 +302,12 @@ func (a *App) show() {
 // 它本身就是指针，直接用 unsafe.Pointer 接住再转成结构体指针，既不违反 unsafe 的规则
 // 也不会触发 go vet 的「uintptr 转指针」告警。
 func (a *App) wndProc(h syscall.Handle, message uint32, wParam uintptr, lParam unsafe.Pointer) uintptr {
+	// 安装器升级前发来的握手消息：让程序自己体面退出（会把缓存刷进库），
+	// 而不是等 Restart Manager 等不下去再强杀。
+	if a.wmQuitRequest != 0 && message == a.wmQuitRequest {
+		a.quit()
+		return 0
+	}
 	switch message {
 	case wmPaint:
 		a.paintWindow(h)

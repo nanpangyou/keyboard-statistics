@@ -76,6 +76,14 @@ func Tooltip(collecting bool) string {
 	return "键盘使用统计 · 采集已暂停"
 }
 
+// QuitMessageName 是「请退出，我要升级了」这条注册消息的名字。
+//
+// 安装器先发这条消息、等进程自己退出，再替换文件。为什么不用 WM_CLOSE 代替：
+// 托盘常驻之后关闭窗口只是「收进托盘」，程序不会退；Restart Manager 只能干等
+// 三十秒再强杀，那段时间里内存中还没落库的计数会丢。
+// 两个进程各自 RegisterWindowMessage 同一个名字会拿到同一个消息号，这就是握手的基础。
+const QuitMessageName = "KeyboardStatistics.QuitForUpgrade"
+
 // HiddenHint 是第一次隐藏到托盘时的气泡提示文案。
 //
 // 用户按了 X 却发现程序没退出，必须马上解释一次，否则会以为关不掉。

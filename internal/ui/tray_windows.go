@@ -210,6 +210,15 @@ func showExistingWindow(h syscall.Handle) {
 	procSetForegroundWin.Call(uintptr(h))
 }
 
+// registerQuitMessage 注册「升级前请退出」这条消息，返回消息号（失败为 0）。
+//
+// 必须和安装器注册同一个字符串，两边才会拿到同一个消息号。
+func registerQuitMessage() uint32 {
+	name := syscall.StringToUTF16Ptr(tray.QuitMessageName)
+	r, _, _ := procRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(name)))
+	return uint32(r)
+}
+
 // quit 真正退出：销毁窗口，消息循环随之结束。
 //
 // 注意不能再用 postMessage(WM_CLOSE)：WM_CLOSE 现在的语义是「收进托盘」，

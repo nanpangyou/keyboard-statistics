@@ -103,6 +103,16 @@ func TestTooltipReflectsCollecting(t *testing.T) {
 	}
 }
 
+func TestQuitMessageName(t *testing.T) {
+	if QuitMessageName == "" {
+		t.Fatal("升级握手消息名不能为空，否则安装器发出去没人接")
+	}
+	// 这个名字要和 scripts/installer.iss 里的一字不差，改了两边都得改
+	if QuitMessageName != "KeyboardStatistics.QuitForUpgrade" {
+		t.Errorf("握手消息名变了（%q）；同时更新 scripts/installer.iss 的 QuitForUpgradeMsg", QuitMessageName)
+	}
+}
+
 func TestAutostartHintDiffersFromHiddenHint(t *testing.T) {
 	at, ab := AutostartHint()
 	ht, hb := HiddenHint()

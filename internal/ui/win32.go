@@ -80,6 +80,8 @@ var (
 	procLoadIconW       = dllUser32.NewProc("LoadIconW")
 	procIsWindowVisible = dllUser32.NewProc("IsWindowVisible")
 
+	procRegisterWindowMessageW = dllUser32.NewProc("RegisterWindowMessageW")
+
 	procCoTaskMemFree = dllOle32.NewProc("CoTaskMemFree")
 )
 
