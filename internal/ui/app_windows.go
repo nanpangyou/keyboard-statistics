@@ -150,6 +150,32 @@ func ShowFatal(text string) {
 	messageBox(0, text, windowTitle, mbOK|mbIconError)
 }
 
+// ShowInfo 弹一条普通提示。目前给「程序已经在运行」用：这不是错误，
+// 不该用错误图标吓人。
+func ShowInfo(text string) {
+	messageBox(0, text, windowTitle, mbOK|mbIconInfo)
+}
+
+// ActivateExisting 把已经在运行的实例窗口拉到前台。
+//
+// 返回 false 表示没找到窗口（可能还在建、或者窗口标题变了）。
+// 按标题找窗口是有意的：类名带了 pid（同一台机器上多实例测试时不会互相抢注册），
+// 所以只能用标题这个稳定标识。
+func ActivateExisting() bool {
+	title, err := syscall.UTF16PtrFromString(windowTitle)
+	if err != nil {
+		return false
+	}
+	h, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(title)))
+	if h == 0 {
+		return false
+	}
+	// 窗口可能最小化了；SetForegroundWindow 对最小化窗口不生效，先还原。
+	showWindow(syscall.Handle(h), swRestore)
+	procSetForegroundWin.Call(h)
+	return true
+}
+
 // Run 创建窗口并进入消息循环，直到窗口关闭才返回。
 func (a *App) Run() {
 	// DPI 感知必须在建窗口之前设置，否则高分屏上坐标会被系统二次缩放。

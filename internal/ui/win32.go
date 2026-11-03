@@ -23,6 +23,8 @@ var (
 	procCreateWindowExW    = dllUser32.NewProc("CreateWindowExW")
 	procDefWindowProcW     = dllUser32.NewProc("DefWindowProcW")
 	procShowWindow         = dllUser32.NewProc("ShowWindow")
+	procFindWindowW        = dllUser32.NewProc("FindWindowW")
+	procSetForegroundWin   = dllUser32.NewProc("SetForegroundWindow")
 	procUpdateWindow       = dllUser32.NewProc("UpdateWindow")
 	procGetMessageW        = dllUser32.NewProc("GetMessageW")
 	procTranslateMessage   = dllUser32.NewProc("TranslateMessage")
@@ -80,6 +82,7 @@ const (
 	swShowNormal        = 1
 	swShowMinNoActivate = 7
 	swShow              = 5
+	swRestore           = 9
 
 	swpNoSize   = 0x0001
 	swpNoMove   = 0x0002

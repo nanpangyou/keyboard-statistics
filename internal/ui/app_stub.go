@@ -37,3 +37,9 @@ func (a *App) Run() {}
 
 // ShowFatal 在非 Windows 平台把启动错误写到标准错误。
 func ShowFatal(text string) { fmt.Fprintln(os.Stderr, text) }
+
+// ShowInfo 在非 Windows 平台把提示写到标准输出。
+func ShowInfo(text string) { fmt.Fprintln(os.Stdout, text) }
+
+// ActivateExisting 在非 Windows 平台没有窗口可激活。
+func ActivateExisting() bool { return false }

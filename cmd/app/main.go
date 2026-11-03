@@ -10,6 +10,7 @@ import (
 
 	"keyboard-statistics/internal/config"
 	"keyboard-statistics/internal/service"
+	"keyboard-statistics/internal/single"
 	"keyboard-statistics/internal/ui"
 )
 
@@ -52,6 +53,24 @@ func main() {
 	}
 	if storeErr != nil {
 		logger.Warn("打开设置存储失败，自定义数据目录不可用", "error", storeErr)
+	}
+
+	// 单实例：两个进程同时写同一个 SQLite 库会互相打架，升级时也说不清该关哪个。
+	guard, alreadyRunning, lockErr := single.Acquire(single.DefaultName)
+	switch {
+	case lockErr != nil:
+		// 拿不到锁不把程序打死：正常机器上几乎不会发生，
+		// 真发生了也宁可让用户能用，只留一条日志。
+		logger.Warn("单实例检查失败，继续启动", "error", lockErr)
+	case alreadyRunning:
+		logger.Info("已有实例在运行，本次启动退出", "autostart", *autostart)
+		// 自启拉起时不要抢焦点：开机就弹窗很烦，而且用户此刻并不在电脑前。
+		if !*autostart && !ui.ActivateExisting() {
+			ui.ShowInfo("键盘使用统计已经在运行了。\n\n请在任务栏里找到它的窗口。")
+		}
+		return
+	default:
+		defer guard.Release()
 	}
 
 	if err := config.EnsureWritable(dir); err != nil {
