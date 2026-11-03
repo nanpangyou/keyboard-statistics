@@ -197,3 +197,26 @@ Start-Process .\bin\app.exe
 5. 装到 `C:\Program Files\` 且**不勾选**便携模式：程序照常运行，数据在 `%LOCALAPPDATA%`
    （这条验证「默认不写程序目录」的约定没被安装包破坏）。
 
+### 9.6 覆盖安装 / 升级
+
+准备两个版本（`<新版本>` 必须比已装的版本高，否则无法确认二进制真的被替换）：
+
+```powershell
+# 装旧的
+.\dist\keyboard-statistics-<旧>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="D:\ks-test" /TASKS="portablemode"
+# 用新的覆盖，故意不给 /DIR 和 /TASKS
+.\dist\keyboard-statistics-<新>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES
+```
+
+1. **必须装回 `D:\ks-test`**，不能再弹出默认目录、也不能在 `%LOCALAPPDATA%\Programs\` 下多出一套。
+2. `keyboard-statistics.exe` 的大小/版本号变成新版（**只看退出码 0 不够**：同版本同文件时
+   Inno 会跳过复制，看起来"成功"其实什么都没做，先用占位文件或跨版本验证）。
+3. `portable.txt` 还在、`data\` 里的统计还在。
+4. 卸载项仍是**一个**，`DisplayName` 里的版本号已更新。
+5. **程序正在运行时升级**：安装器应通过 Restart Manager 识别并关闭程序，然后替换文件，
+   日志里会出现 `RestartManager found an application using one of our files`；
+   升级后不应提示"需要重启系统"。
+6. 交互式安装（不静默）：最后一页的「立即启动」勾选项要能把程序重新拉起来。
+7. 反例：已经装过一套、又**不卸载**直接装到另一个目录——注册表里只会留最后装的那套，
+   先前那套的文件会变成孤儿目录（Inno 的固有行为，不是 bug；文档里不要承诺"多套并存"）。
+
