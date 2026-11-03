@@ -152,6 +152,16 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   图标是 `assets/app.ico`（9 档尺寸，`scripts/make-icon.py` 从设计稿生成），
   经 `winres.json` 的 `RT_GROUP_ICON` 嵌进 exe；托盘用 `LoadImageW(module, 1, ...)` 取它，
   取不到才退回 `IDI_APPLICATION`——**别删 `winres.json` 里那段，删了托盘就变系统默认图标**。
+- **消息循环必须锁 OS 线程**（`runtime.LockOSThread`，见 `ui.(*App).Run`）：
+  窗口的消息队列属于**创建它的那个线程**，而 `GetMessage` 只从**调用它的那个线程**的队列取消息。
+  Go 的调度器会把没锁定的协程挪到别的 OS 线程上；一旦在建窗口之后挪走，
+  `GetMessage` 就等在了新线程的空队列上——窗口再也收不到任何队列消息（定时器不响、
+  不再重绘、托盘右键无反应），发给窗口的 `SendMessage` 全部超时，
+  从外面看就是「未响应 + CPU 0」。v0.5.1 及以前正是这么挂的（实测启动后几十秒必现）。
+  钩子协程本来就锁着，**别只锁钩子不锁界面**。
+- **判定「界面是否还活着」不能用 `PrintWindow` 截图**：它读的是 DWM 的重定向表面，
+  界面线程死了照样能抓到一张好像没问题的图。可靠判据是「外部 `WM_NULL` 探针能过」
+  +「底部状态栏的时刻像素在变」（`scripts/verify/soak_ui.py` 就是干这个的）。
 - **界面线程上不许做会阻塞的事**：刷新路径里每 2 秒读 3 次注册表这种「顺手」也要删掉
   （`applyPendingSnapshot` 里踩过）。已知仍在界面线程上的可疑调用：`svc.SetCollecting`
   的 meta 写库、`ClearData`、`ExportCSV`、托盘那几个 `Shell_NotifyIcon`（Explorer 忙时是
@@ -201,6 +211,7 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 | `tray_check.py` / `tray_probe.py` | 关窗隐藏/托盘唤醒、托盘图标是否真的注册（带对照窗口） |
 | `tray_menu_hang.py` | 托盘右键之后界面线程还响不响应（有没有被模态菜单卡死） |
 | `watch_hang.py` | 盯住运行中的窗口，记录「未响应」的时间段与那段 CPU |
+| `soak_ui.py` | 浸泡验证界面是不是真的在处理消息（外部探针 + 底部时钟像素变化） |
 | `installer_prompt.py` | 升级/重装的确认框（连向导一起点完），是否与是否两条路 |
 | `autostart_silent.py` | 自启静默无提示 + 欢迎说明推迟到打开窗口 |
 | `handshake_timeline.py` | 升级握手到进程退出的时间线 |

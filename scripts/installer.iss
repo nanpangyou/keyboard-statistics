@@ -37,7 +37,7 @@
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.5.1"
+#define MyAppVersion "0.5.2"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
 
@@ -58,7 +58,7 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.5.1.exe is missing. Run scripts\build.ps1 -Version 0.5.1 first.
+  #error dist artifact not found: dist\keyboard-statistics-v0.5.2.exe is missing. Run scripts\build.ps1 -Version 0.5.2 first.
 #endif
 
 [Setup]
