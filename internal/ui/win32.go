@@ -123,6 +123,7 @@ const (
 	wmLButtonDblClk = 0x0203
 	wmRButtonUp     = 0x0205
 	wmNull          = 0x0000
+	wmSetIcon       = 0x0080
 	wmCancelMode    = 0x001F
 
 	nimAdd    = 0
@@ -150,6 +151,10 @@ const (
 	lrShared       = 0x8000
 	lrDefaultSize  = 0x0040
 	idiApplication = 32512
+
+	// 窗口图标：ICON_SMALL 给标题栏，ICON_BIG 给 Alt+Tab 和任务栏。
+	iconSmall = 0
+	iconBig   = 1
 
 	// 托盘图标的回调消息与图标 ID
 	msgTray    = wmApp + 2
@@ -321,6 +326,40 @@ func createWindow(className, title string, w, h int32, hInst syscall.Handle) (sy
 		return 0, fmt.Errorf("CreateWindowExW: %w", err)
 	}
 	return syscall.Handle(r), nil
+}
+
+// loadWindowIcon 按指定像素边长取 exe 内嵌的应用图标（资源 id 1，见 assets\winres.json）。
+//
+// 和托盘那份的区别是这里显式要尺寸：标题栏要 16px、Alt+Tab 要 32px，
+// 让系统在 9 档尺寸里挑最合适的一档，比给它一张大图临时缩要清楚得多。
+// 取不到返回 0，调用方就别动图标（保持系统默认，总比空白好）。
+func loadWindowIcon(size int32) syscall.Handle {
+	inst, _, _ := procGetModuleHandleW.Call(0)
+	if inst == 0 || size <= 0 {
+		return 0
+	}
+	h, _, _ := procLoadImageW.Call(inst, 1, imageIcon, uintptr(size), uintptr(size), lrShared)
+	if h == 0 {
+		return 0
+	}
+	return syscall.Handle(h)
+}
+
+// setWindowIcon 把图标挂到窗口上。
+//
+// 只给窗口类设图标是不够的：任务栏、Alt+Tab、标题栏各取各的（ICON_BIG / ICON_SMALL），
+// 而且类图标在建窗口时若还没备好就再也补不上，所以这里两只都显式换一遍。
+// 不换的话窗口左上角是系统默认的白板图标——用户一眼就看出「这不是正式版」。
+func setWindowIcon(h syscall.Handle, small, big syscall.Handle) {
+	if h == 0 {
+		return
+	}
+	if small != 0 {
+		procSendMessageW.Call(uintptr(h), wmSetIcon, iconSmall, uintptr(small))
+	}
+	if big != 0 {
+		procSendMessageW.Call(uintptr(h), wmSetIcon, iconBig, uintptr(big))
+	}
 }
 
 func defWindowProc(h syscall.Handle, message uint32, wParam, lParam uintptr) uintptr {
