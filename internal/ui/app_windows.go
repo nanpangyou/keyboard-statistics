@@ -30,7 +30,7 @@ const (
 	// 代价是每秒两次 SQLite 聚合 + 一次重绘，实测（便携模式 500 多条真实数据）
 	// 单次取数在毫秒级，界面不卡；取数仍然在后台协程里跑，来不及就跳过本次 tick
 	// （见 requestRefresh 的 fetching 判断），不会堆积。
-	refreshInterval = 2 * time.Second
+	refreshInterval = 500 * time.Millisecond
 
 	clientWidth  = 900
 	clientHeight = 680
