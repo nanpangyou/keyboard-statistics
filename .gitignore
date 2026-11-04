@@ -29,3 +29,4 @@ desktop.ini
 # Go 工作区文件（本项目不用，出现即说明有人误建）
 go.work
 go.work.sum
+.dsh/

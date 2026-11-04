@@ -152,6 +152,14 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   图标是 `assets/app.ico`（9 档尺寸，`scripts/make-icon.py` 从设计稿生成），
   经 `winres.json` 的 `RT_GROUP_ICON` 嵌进 exe；托盘用 `LoadImageW(module, 1, ...)` 取它，
   取不到才退回 `IDI_APPLICATION`——**别删 `winres.json` 里那段，删了托盘就变系统默认图标**。
+- **小尺寸图标要现画，不能缩大图**：`make-icon.py` 里 16/20/24 走 `draw_small()`
+  （浅灰面板 + 深蓝描边 + 绿色折线），32px 以上才用设计稿缩放。把设计稿直接缩到 16px
+  会糊成一团灰点——那正是 v0.5.2 及以前托盘里的样子。改母题就改 `draw_small`，别去调缩放参数。
+- **窗口图标必须显式 `WM_SETICON`**（`loadWindowIcon` + `setWindowIcon`）：
+  只在 `registerClass` 里设是不够的（当时压根没设过），标题栏和 Alt+Tab 会一直是系统白板图标。
+  ICON_SMALL 取 `px(16, scale)`、ICON_BIG 取 `px(32, scale)`，尺寸跟着 DPI 走。
+  **验图标要先让 exe 带上资源**：`cmd/app/rsrc/*.syso` 是 `build.ps1` 生成、用完即删的，
+  手搓 `go build` 出来的 exe 没有图标资源，`LoadImageW` 一律返回 0（踩过，白查一轮）。
 - **消息循环必须锁 OS 线程**（`runtime.LockOSThread`，见 `ui.(*App).Run`）：
   窗口的消息队列属于**创建它的那个线程**，而 `GetMessage` 只从**调用它的那个线程**的队列取消息。
   Go 的调度器会把没锁定的协程挪到别的 OS 线程上；一旦在建窗口之后挪走，
@@ -162,6 +170,11 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 - **判定「界面是否还活着」不能用 `PrintWindow` 截图**：它读的是 DWM 的重定向表面，
   界面线程死了照样能抓到一张好像没问题的图。可靠判据是「外部 `WM_NULL` 探针能过」
   +「底部状态栏的时刻像素在变」（`scripts/verify/soak_ui.py` 就是干这个的）。
+- **界面刷新节奏是产品参数，不是实现细节**：`refreshInterval = 500ms`（v0.5.3 起，
+  之前是 2 秒）。`internal/ui/refresh_cadence_test.go` 把「≤500ms」和
+  「看门狗探针间隔 ≥1 秒且不短于刷新间隔」钉住了，想改先想想用户会不会觉得「统计有延迟」。
+  刷得勤不等于堆积：`requestRefresh` 有 `fetching` 闸门，上一次取数没回来就跳过本次。
+  想量实际延迟用 `scripts/verify/refresh_latency.py`（改 2 秒时代实测 ~1.1s，现在 ~0.6s）。
 - **界面线程上不许做会阻塞的事**：刷新路径里每 2 秒读 3 次注册表这种「顺手」也要删掉
   （`applyPendingSnapshot` 里踩过）。已知仍在界面线程上的可疑调用：`svc.SetCollecting`
   的 meta 写库、`ClearData`、`ExportCSV`、托盘那几个 `Shell_NotifyIcon`（Explorer 忙时是
@@ -212,6 +225,8 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
 | `tray_menu_hang.py` | 托盘右键之后界面线程还响不响应（有没有被模态菜单卡死） |
 | `watch_hang.py` | 盯住运行中的窗口，记录「未响应」的时间段与那段 CPU |
 | `soak_ui.py` | 浸泡验证界面是不是真的在处理消息（外部探针 + 底部时钟像素变化） |
+| `refresh_latency.py` | 量「库里数字变了 → 界面上看见」的延迟（验刷新节奏，只对测试数据目录用） |
+| `wizard_shots.py` | 逐页截图安装向导，验界面语言/文案（走正常流程，最后点取消，不会真装上） |
 | `installer_prompt.py` | 升级/重装的确认框（连向导一起点完），是否与是否两条路 |
 | `autostart_silent.py` | 自启静默无提示 + 欢迎说明推迟到打开窗口 |
 | `handshake_timeline.py` | 升级握手到进程退出的时间线 |
@@ -226,6 +241,13 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   **云桌面 / 远程桌面**（无 GPU 加速）实测能正常出窗口。
 - 安装包用 Inno Setup，脚本 `scripts/installer.iss`：`PrivilegesRequired=lowest`（按用户安装，
   允许自选目录），「便携模式」任务在 `{app}` 下创建 `portable.txt`。安装包不改变主程序行为。
+- **安装界面是简体中文，语言文件自己维护**：`scripts/languages/ChineseSimplified.isl`
+  按 Inno 6 的完整消息集逐条翻译（少一条 ISCC 直接报 missing message），
+  **必须 UTF-8 带 BOM**——Inno 只在有 BOM 时按 UTF-8 解析 `.isl`，否则按
+  `LanguageCodePage` 当 ANSI 读，中文全乱码。这是仓库里唯一允许 BOM 的文件。
+  `[Languages]` **只挂这一种语言**：挂两种会先弹「选择安装语言」，而 Inno 按系统的
+  「首选界面语言」自动选，实测这台机器上自动选中的是英文，向导整页英文。
+  `[Code]` 里的对话框文案一律走 `ExpandConstant('{cm:...}')`，别在那里写死中文或英文。
 - **升级必须原地**：`AppId` 固定不变（改了就等于另一个软件，升级会装成两套）；
   升级时隐藏目录选择页（`ShouldSkipPage`），并用 `PrepareToInstall` + `{param:DIR|}` 拒绝指向别处的 `/DIR`。
   想换目录必须先卸载。

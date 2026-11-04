@@ -17,6 +17,73 @@
 
 ---
 
+## 🎯 2026-11-04 · 安装器汉化、半秒刷新、窗口图标、托盘小图（v0.5.3）
+
+**🎯 做了什么**
+
+四件事，都是用户能一眼看到的那种：
+
+1. **安装向导汉化**：`scripts/languages/ChineseSimplified.isl`，按本机 Default.isl 的
+   完整消息集逐条翻译（280 条 [Messages] + 本项目自己的 [CustomMessages]），
+   安装/升级/卸载/错误/确认框全覆盖。`[Code]` 里那几处写死的中文/英文串改成
+   `ExpandConstant('{cm:...}')`，`[Tasks]` 的描述也换成自定义消息。
+2. **刷新节奏 2s → 500ms**：`refreshInterval = 500 * time.Millisecond`。
+3. **窗口左上角图标**：`registerClass` 只给了光标，从没设过图标，标题栏和 Alt+Tab
+   一直是系统白板。现在 `loadWindowIcon(px(16|32, scale))` + `WM_SETICON`
+   分别设 ICON_SMALL / ICON_BIG。
+4. **托盘小图**：`scripts/make-icon.py` 里 16/20/24 三档改成**按母题现画**
+   （`draw_small`），32px 以上仍用设计稿，合成同一个 `.ico`。
+
+**💡 为什么这么做**
+
+- 汉化：Inno Setup 6.7.3 官方包确实没有简体中文，而网上的 .isl 来源不明、消息集还常缺条，
+  缺一条 ISCC 就报错。自己按官方消息集翻，版本对得上，也不用引入第三方文件。
+- 半秒：2 秒的刷新让人以为「程序没在统计」。只改常量不够，还得保证取数不堆积——
+  `requestRefresh` 本来就有 `fetching` 闸门，来不及就跳过本次 tick，所以刷得勤也不卡。
+- 图标：图标资源一直嵌在 exe 里，托盘在用，只是没给窗口；小尺寸糊是因为
+  「大图缩出来」这条路对 16px 根本不成立（折线只剩半透明的一两个像素）。
+
+**🕳️ 踩了什么坑**
+
+- **`go build` 直接用不会带图标资源**：`cmd/app/rsrc/*.syso` 是 `build.ps1` 生成、
+  用完即删的。我一开始手搓 `go build` 验图标，`LoadImageW` 一律返回 0，
+  还以为代码没生效。要验图标必须先跑一遍 `go-winres make`（或者直接 `build.ps1`）。
+- **`{[SourcePath}` 自带结尾反斜杠**：写成 `{#SourcePath}\languages\...` 会拼出双斜杠。
+- **语言文件必须带 UTF-8 BOM**：Inno 只在文件以 BOM 开头时按 UTF-8 解析 `.isl`，
+  否则按 `LanguageCodePage` 当 ANSI 读，中文全变乱码。仓库里这是唯一的 BOM 例外，
+  已在 `installer.iss` 注释里写明原因。
+- **挂了两种语言反而默认英文**：Inno 会先弹「选择安装语言」，并按系统「首选界面语言」
+  列表自动选——这台机器上自动选中的是**英文**，向导整页英文（实测标题
+  `Setup - Keyboard Statistics 0.5.3`）。改成只挂中文后，标题变
+  「安装程序 - Keyboard Statistics 0.5.3」，不存在不确定性。
+- **语言对话框会把向导挡住**：两种语言时 `TWizardForm` 要等选完语言才创建，
+  脚本里直接 `FindWindowExW("TWizardForm")` 会一直找不到。`wizard_shots.py` 里
+  现在先处理 `TSelectLanguageForm`。
+- **会话残留的安装进程会串台**：上一轮试跑留着的 `TSelectLanguageForm` 被这一轮脚本
+  按掉了，于是"别人的向导"走到前台，读到的标题是英文，白查一轮。脚本开头改成先清场。
+- **托盘小图第一版画成了「一道横线」**：三点折线在 16px 下几乎没起伏，端点圆点在 24px
+  又糊成一坨。改成四点（低—高—低—中）、去掉端点圆点、20px 以上加一块橙色垫才立住。
+
+**✅ 测试状态**
+
+- `gofmt -l cmd internal` 无输出；`go vet ./...` 干净；`go test ./...` 全绿（168 个用例）。
+- 新增 `internal/ui/refresh_cadence_test.go`：把「刷新间隔 ≤ 500ms」和
+  「探针间隔 ≥ 1 秒且不短于刷新间隔」钉住，免得以后被人以「省一次聚合」改回去。
+- 新增 `scripts/verify/wizard_shots.py`（逐页截图向导）、
+  `scripts/verify/refresh_latency.py`（量「数字多久才动」）。
+- 实机：安装向导全中文（选择附加任务 / 准备安装 / 退出安装 都验过截图）；
+  0.5.3 原地升级到 `D:\Program Files\KeyboardStatistics`，数据 863 次按键完好；
+  `WM_GETICON` 两档都非 0，标题栏放大截图确认是新的小图；
+  浸泡 23/23 探针通过、未响应 0 秒。
+
+**➡️ 下一步**
+
+- 托盘图标最终观感还要用户在真机托盘上确认（16px 与窗口标题栏用的是同一帧）。
+- 若以后要出英文安装包：`[Languages]` 里补一行 + 一份只含 `[CustomMessages]` 的
+  英文覆盖文件（`MessagesFile` 支持逗号分隔，后者覆盖前者）。
+
+---
+
 ## 🎯 2026-11-03 · 揪出「未响应」真凶：消息循环没锁 OS 线程（v0.5.2）
 
 **🎯 做了什么**
