@@ -24,20 +24,21 @@
 ;      比留一个文件危险得多。这里只保证「不创建」。
 ;   5) 卸载：{app}\data 存在时用 MsgBox 问用户，默认按钮是「否」；
 ;      静默卸载（/SILENT、/VERYSILENT）一律保留，绝不静默删统计数据。
-;   6) 语言：本机 Inno Setup 6 的 Languages\ 目录里没有 ChineseSimplified.isl
-;      （只有官方随包的那批语言），按约定不自行下载翻译文件，界面用英文。
-;      见 [Languages] 段注释。
+;   6) 语言：界面默认简体中文，英文保底可选。
+;      中文文件是本项目自己翻的（scripts\languages\ChineseSimplified.isl，完整消息集），
+;      不引用来历不明的第三方 .isl。见 [Languages] 段注释。
 ;   7) 主程序来源：显式路径 ..\dist\keyboard-statistics-v<MyAppVersion>.exe，
 ;      不用通配。通配会同时匹配到多个历史产物，还有把 *-setup.exe 自己装进去
 ;      的风险；这里用 #define + 编译期 FileExists 断言，产物缺失直接报错。
 ;      **发新版时只改下面 MyAppVersion 一处。**
 ;
-; 编码：UTF-8 无 BOM + LF（仓库 .gitattributes 要求）。界面文案全是 ASCII 英文，
-;      中文只出现在注释里，即使被误判编码也不会影响编译产物。
+; 编码：本文件 UTF-8 无 BOM + LF（仓库 .gitattributes 要求），中文只出现在注释里。
+;      **语言文件是唯一例外：ChineseSimplified.isl 必须带 BOM**，否则 Inno 按 ANSI 读，
+;      向导里的中文会全成乱码（实测过）。
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.5.2"
+#define MyAppVersion "0.5.3"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
 
@@ -58,7 +59,7 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.5.2.exe is missing. Run scripts\build.ps1 -Version 0.5.2 first.
+  #error dist artifact not found: dist\keyboard-statistics-v0.5.3.exe is missing. Run scripts\build.ps1 -Version 0.5.3 first.
 #endif
 
 [Setup]
@@ -102,16 +103,25 @@ VersionInfoDescription={#MyAppName} {#MyAppVersion} Setup
 VersionInfoCompany={#MyAppPublisher}
 
 [Languages]
-; 本机 Languages\ 下没有 ChineseSimplified.isl（Inno Setup 6.7.3 官方包不含简体中文），
-; 按任务约定不自行下载第三方翻译文件，因此只保留英文向导。
-; 若以后把官方/自制的 ChineseSimplified.isl 放进 Languages\，在这里追加一行即可：
-;   Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
+; 只挂一种语言：**只挂一种时 Inno 不会弹语言选择框，界面上没有任何一个英文词**。
+;
+; 为什么不留英文备选：实测过带两种语言的效果——Inno 会先弹「选择安装语言」框，
+; 而它按系统的「首选界面语言」列表自动选，这台机器上自动选中的是**英文**，
+; 于是向导整页英文（标题 `Setup - Keyboard Statistics`），中文用户反而要多点一次下拉框。
+; 本程序面向中文用户，把这个不确定性去掉比留一个英文选项重要。
+;
+; 以后真要出英文版：在这里追加一行，并另写一份只含 [CustomMessages] 的英文覆盖文件
+; （MessagesFile 支持逗号分隔，后者覆盖前者），形如
+;   Name: "english"; MessagesFile: "compiler:Default.isl,languages\English.isl"
+;
+; 中文文件是本项目自己翻的（languages\ChineseSimplified.isl，完整消息集，
+; UTF-8 带 BOM——Inno 只认带 BOM 的 UTF-8 语言文件，没 BOM 会按 ANSI 读成乱码）。
+Name: "chinesesimplified"; MessagesFile: "{#SourcePath}languages\ChineseSimplified.isl"
 
 [Tasks]
 ; 两个任务都不加 unchecked / checkedonce，即默认勾选。
 ; 升级安装时 Inno 会用上次选择（UsePreviousTasks 默认 yes），不会把用户的偏好改掉。
-Name: "portablemode"; Description: "Portable mode: keep statistics in a ""data"" folder next to the program (creates portable.txt)"; GroupDescription: "Data location:"
+Name: "portablemode"; Description: "{cm:SetupPortableModeDesc}"; GroupDescription: "{cm:SetupDataLocationGroup}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
@@ -210,9 +220,9 @@ begin
 
   if not WizardSilent then
   begin
-    if MsgBox('键盘使用统计正在运行。' + #13#10#13#10 +
-              '继续安装需要先退出它（已经统计的按键会先保存好）。' + #13#10#13#10 +
-              '现在退出程序并继续安装吗？',
+    if MsgBox(ExpandConstant('{cm:SetupAppRunningHead}') + #13#10#13#10 +
+              ExpandConstant('{cm:SetupAppRunningBody}') + #13#10#13#10 +
+              ExpandConstant('{cm:SetupAppRunningAsk}'),
               mbConfirmation, MB_YESNO) = IDNO then
     begin
       Result := False;  { 干净退出，不弹错误框 }
@@ -272,10 +282,10 @@ begin
   Requested := ExpandConstant('{param:DIR|}');
   if (GPreviousDir <> '') and (Requested <> '') and not SameDir(Requested, GPreviousDir) then
   begin
-    Result := 'This is an upgrade: the program must stay in its existing folder.' + #13#10#13#10 +
-              'Existing:  ' + GPreviousDir + #13#10 +
-              'Requested: ' + Requested + #13#10#13#10 +
-              'Uninstall the old version first if you really want a different folder.';
+    Result := ExpandConstant('{cm:SetupUpgradeDirLockedHead}') + #13#10#13#10 +
+              ExpandConstant('{cm:SetupUpgradeDirExisting}') + ' ' + GPreviousDir + #13#10 +
+              ExpandConstant('{cm:SetupUpgradeDirRequested}') + ' ' + Requested + #13#10#13#10 +
+              ExpandConstant('{cm:SetupUpgradeDirLockedTail}');
     Exit;
   end;
 
@@ -303,9 +313,9 @@ begin
     Exit;
   end;
 
-  if MsgBox('Delete the statistics data stored next to the program?' + #13#10 + #13#10 +
+  if MsgBox(ExpandConstant('{cm:SetupKeepDataHead}') + #13#10 + #13#10 +
             DataDir + #13#10 + #13#10 +
-            'Choose No to keep your data. Deleted data cannot be recovered.',
+            ExpandConstant('{cm:SetupKeepDataTail}'),
             mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
   begin
     DelTree(DataDir, True, True, True);
