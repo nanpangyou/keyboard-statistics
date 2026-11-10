@@ -99,6 +99,7 @@ docs/requirements.md     # 需求说明
 docs/metrics.md          # 统计口径（唯一标准）
 docs/devlog.md           # 开发日志（面向后续 agent 的流水账）
 docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
+docs/releases/v*.md      # 每个正式版本的发布说明（给用户看，可直接贴到发布页）
 ```
 
 - 依赖方向单向：`cmd → ui → stats/store → hook`。`stats` 只做纯计算，不 import UI 和 sqlite。
@@ -260,6 +261,34 @@ docs/manual-test.md      # 钩子等无法自动化的手动验证步骤
   互斥体名只在一处定义（`single.DefaultName`），**不要**把它接到安装包的 `AppMutex` 上。
 - 版本号注入 `main.version`，`--version` 能打印；发布产物命名 `keyboard-statistics-v1.2.0.exe`。
 - 每次发布更新 `CHANGELOG.md`，写清统计口径有没有变。
+
+### 发版清单（v1.0.0 定型，照这个顺序走）
+
+版本号散落在好几处，**漏一处就会出现「安装包写旧号、程序里是新号」**，发布前先全捞出来核对：
+
+```powershell
+Select-String -Path README.md,scripts\installer.iss,CHANGELOG.md -Pattern '\d+\.\d+\.\d+'
+```
+
+1. **改版本号**：`scripts/installer.iss` 两处（`MyAppVersion` + 那句写死的 `#error` 断言，
+   ISPP 的 `#error` 不吃字符串拼接）、`README.md` 三处（手册版本 + 两个产物文件名）。
+2. **写文档**：`CHANGELOG.md` 新版本节（分类固定：新增/变更/修复/移除/安全）、
+   `docs/releases/vX.Y.Z.md`（发布说明：下载对照表 + SHA256、能做什么、相比上一版的变化、
+   安装升级步骤、已知限制、做过的验证）、`docs/devlog.md` 最上方一条。
+3. **门禁**：`gofmt -l cmd internal` 无输出、`go vet ./...`、`go test ./...` 全绿。
+4. **出产物**：`.\scripts\build.ps1 -Version X.Y.Z` → `ISCC.exe scripts\installer.iss`
+   （ISCC 只吃 `dist\keyboard-statistics-vX.Y.Z.exe` 已经存在，缺了会 `#error`）。
+   核对两个产物的 `VersionInfo.FileVersion` 都是 `X.Y.Z.0`，再算 SHA256 填进发布说明。
+5. **打包**：`Compress-Archive` 只列**文件**（传目录会多套一层），zip 里放
+   exe + 安装包 + 发布说明；旧版本产物移进 `dist\archive\` 留回滚底子。
+6. **实机升级验证**（有安装版时必做）：先给窗口发 `KeyboardStatistics.QuitForUpgrade`
+   **让它自己正常退出**（`Stop-Process -Force` 会丢掉最多 30 秒没落库的计数，
+   实测优雅退出前后总按键 39531 → 39531 一个不丢）→ 静默装新版 →
+   核对版本资源、`portable.txt`、数据总量、卸载登记项 `DisplayName` 里的版本号 → 起程序浸泡一次。
+7. **提交 + 打标签**：`git commit`（`📝 docs:` 或 `🔧 chore:`）→
+   `git tag -a vX.Y.Z -m "..."`。仓库目前**没有远端**，所以不推送；
+   要发到托管平台时，把 zip 和发布说明正文贴过去即可。
+
 - 本机 Inno Setup 是**按用户安装**的，`ISCC.exe` 在 `%LOCALAPPDATA%\Programs\Inno Setup 6\`，
   不在 `Program Files`。
 - **在工作区内直接运行 exe / 安装包会被 DSH 沙箱以 Low Integrity 跑**（写不了 `HKCU` 与 `%LOCALAPPDATA%`，

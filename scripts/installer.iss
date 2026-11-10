@@ -24,9 +24,10 @@
 ;      比留一个文件危险得多。这里只保证「不创建」。
 ;   5) 卸载：{app}\data 存在时用 MsgBox 问用户，默认按钮是「否」；
 ;      静默卸载（/SILENT、/VERYSILENT）一律保留，绝不静默删统计数据。
-;   6) 语言：界面默认简体中文，英文保底可选。
-;      中文文件是本项目自己翻的（scripts\languages\ChineseSimplified.isl，完整消息集），
-;      不引用来历不明的第三方 .isl。见 [Languages] 段注释。
+;   6) 语言：界面只有简体中文（这一版起）。中文文件是本项目自己翻的
+;      （scripts/languages/ChineseSimplified.isl，完整消息集），不引用来历不明的第三方 .isl。
+;      **只挂一种语言**：挂两种会先弹「选择安装语言」，而 Inno 按系统「首选界面语言」自动选，
+;      实测这台机器上自动选中英文、整个向导变英文。见 [Languages] 段注释。
 ;   7) 主程序来源：显式路径 ..\dist\keyboard-statistics-v<MyAppVersion>.exe，
 ;      不用通配。通配会同时匹配到多个历史产物，还有把 *-setup.exe 自己装进去
 ;      的风险；这里用 #define + 编译期 FileExists 断言，产物缺失直接报错。
@@ -38,7 +39,7 @@
 ; ============================================================================
 
 #define MyAppName "Keyboard Statistics"
-#define MyAppVersion "0.5.3"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "keyboard-statistics"
 #define MyAppExeName "keyboard-statistics.exe"
 
@@ -59,7 +60,7 @@
 ; 编译期断言：源 exe 必须存在。ISPP 的 #error 只吃字面量，不做字符串拼接，
 ; 所以这句话里的版本号是写死的，改 MyAppVersion 时顺手改这里。
 #if !FileExists(AddBackslash(SourcePath) + MyAppSourceExe)
-  #error dist artifact not found: dist\keyboard-statistics-v0.5.3.exe is missing. Run scripts\build.ps1 -Version 0.5.3 first.
+  #error dist artifact not found: dist\keyboard-statistics-v1.0.0.exe is missing. Run scripts\build.ps1 -Version 1.0.0 first.
 #endif
 
 [Setup]
