@@ -21,8 +21,11 @@
 
 **🎯 做了什么**
 
-公开仓库已建好：`https://github.com/yukinian/keyboard-statistics`
-（默认分支 `main`、101 个文件、51 个提交、`v1.0.0` 标签齐全）。
+公开仓库已建好：`https://github.com/nanpangyou/keyboard-statistics`
+（默认分支 `main`、102 个文件、`v1.0.0` 标签与 Release 齐全，挂了三件产物）。
+
+> 过程里先在另一个账号名下试过一版；最终发布在 `nanpangyou` 名下，
+> 并通过 SSH 强制推送把远端 SHA 与本地对齐（提交历史不再有差异）。
 
 **💡 为什么绕这么远**
 
@@ -951,7 +954,7 @@ Directory for uninstall files: ...\ksu\appB
 
 **🎯 做了什么**：
 
-1. Git 提交身份统一为 `Afar的大肥鱼 <yigehd@foxmail.com>`，并用
+1. Git 提交身份统一为 `Afar的大肥鱼`（邮箱已隐去），并用
    `git rebase --root --exec "git commit --amend --no-edit --reset-author"` 重写了前 4 个提交的作者与提交者。
 2. 新增 `.editorconfig`，全项目强制 UTF-8（无 BOM）+ LF，`*.ps1/*.bat/*.cmd` 用 CRLF。
 3. 新增三份文档：`README.md`（使用手册）、`CHANGELOG.md`（版本变更）、`docs/devlog.md`（本文件）。
