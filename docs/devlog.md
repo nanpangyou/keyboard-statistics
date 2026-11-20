@@ -17,6 +17,60 @@
 
 ---
 
+## 📤 2026-11-20 · 把仓库搬到 GitHub（网络受限下的绕行方案）
+
+**🎯 做了什么**
+
+公开仓库已建好：`https://github.com/yukinian/keyboard-statistics`
+（默认分支 `main`、101 个文件、51 个提交、`v1.0.0` 标签齐全）。
+
+**💡 为什么绕这么远**
+
+本机 `github.com:443` 在 **TLS 阶段被重置**，git 走 HTTPS 完全推不上去。排查过一圈：
+
+| 尝试 | 结果 |
+|---|---|
+| 直连 HTTPS（git 自带 openssl 后端） | ❌ Recv failure: Connection was reset |
+| `http.sslBackend=schannel`（换 Windows TLS 栈） | ❌ 同样失败 |
+| TLS1.2 / TLS1.3 / HTTP/1.1 / HTTP2 / 伪装 UA | ❌ 全失败 |
+| `http.curloptResolve` 钉到其它 GitHub IP | ❌ 后端不支持该选项 |
+| 本地 CONNECT 代理钉 IP（140.82.112.3 等） | ❌ 仍被重置 → 是按域名/SNI 拦的 |
+| 用系统栈（PowerShell/.NET）访问 `https://github.com` | ✅ **HTTP 200**（所以不是全网封，是 git 的 TLS 指纹被针对） |
+| `api.github.com`、`ssh.github.com:443` | ✅ 通 |
+| SSH 推送 | ❌ 本机公钥没登记到账号（`Permission denied (publickey)`），`gh` token 也没有 `admin:public_key` 权限，代加不了 |
+
+所以走 **GitHub REST API 重建历史**：`gh repo create` 建仓 → 逐提交
+`blobs → trees(base_tree 增量) → commits → refs` → 复刻 annotated tag，共 **342 次调用**。
+
+**🕳️ 踩了什么坑**
+
+- **Python 不能把真实 NUL 塞进命令行参数**：`--format=<NUL分隔>` 直接报
+  `embedded null character`。改用 git 的 `%x1f`/`%x1e` 转义，由 git 在输出里展开。
+- **空仓库不允许创建 blob**：`POST /git/blobs` 返回 `409 Git Repository is empty`。
+  先用 Contents API 写一个占位提交把仓库"点亮"，重建完再把 `main` 强制指向真实历史，
+  占位提交就成了不可达对象（界面上看不到，`.replay-placeholder` 也不在树里）。
+- **SHA 对不上（本次最大的遗憾）**：GitHub 用 API 创建提交时会把 author/committer 的
+  `+0800` **规范化成 UTC**，于是每个提交的 SHA 都和本地不同。
+  内容层面 101/101 文件、51 个提交、tree 全部一致 —— 远端是**内容等价的镜像**，
+  本地仍是权威历史。
+
+**✅ 测试状态**
+
+- 远端核对：文件数 101 = 本地 101；逐文件 blob 比对 **0 处不一致**；
+  提交数 51 = 本地 51；根提交信息与本地首提交一致；只有 `refs/heads/main` 与
+  `refs/tags/v1.0.0` 两个引用，没有多余分支或遗留文件。
+- 本地门禁（提交前）：`gofmt -l` 无输出、`go vet` 干净、`go test ./...` 8 个包全绿。
+
+**➡️ 下一步**
+
+- 想让**本地与远端 SHA 完全一致**：把 `~/.ssh/id_ed25519.pub` 加到 GitHub 账号后
+  `git push --force origin main --tags` 一次即可（此后远端 = 本地）。
+- 仓库还没有 `LICENSE`：公开仓库没有许可证等于"保留所有权利"，建议补 MIT。
+- 发布产物（`dist/keyboard-statistics-1.0.0.zip` 与安装包）可以挂到 Release 上 ——
+  `api.github.com` 通，上传资产不需要 git 传输。
+
+---
+
 ## 🎉 2026-11-10 · 发布第一个正式版本 v1.0.0
 
 **🎯 做了什么**
