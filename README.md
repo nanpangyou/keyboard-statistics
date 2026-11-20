@@ -244,3 +244,9 @@ A：设置页「清空数据」一键删除，不可恢复。
 ---
 
 📚 变更记录见 [CHANGELOG.md](CHANGELOG.md)　·　🛠️ 开发过程见 [docs/devlog.md](docs/devlog.md)
+
+## 📄 许可证
+
+[MIT License](LICENSE) —— 可以自由使用、修改、分发（含商用），保留版权声明即可。
+软件按「现状」提供，不附带任何担保。
+
